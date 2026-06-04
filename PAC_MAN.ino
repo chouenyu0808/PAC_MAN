@@ -1,34 +1,30 @@
 /**
- * PAC-MAN Multi-Screen Edition (With Sound)
+ * PAC-MAN Multi-Screen Edition (4-Screen Version)
  * ----------------------------
- * 此程式支援三機連動模式。燒錄前請根據板子的位置修改下方 ROLE 定義：
  * 1 = Master (中間螢幕 / 遊戲邏輯 / 音效中心)
  * 2 = Slave Left (左邊螢幕 / 玩家 1 輸入)
  * 3 = Slave Right (右邊螢幕 / 玩家 2 輸入)
+ * 4 = Scoreboard (計分板螢幕 / 顯示大分數與頭像)
  */
 
-#define ROLE 1  // <--- 修改這裡：1:中, 2:左, 3:右
+#define ROLE 1  // <--- 修改這裡：1:中, 2:左, 3:右, 4:計分板
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
 #include <SoftwareSerial.h>
-#include <TM1638plus.h>
 
 // --- 硬體腳位定義 ---
-#define TFT_CS   10
-#define TFT_DC   9
-#define TFT_RST  8
-#define TM_STB   7
-#define TM_CLK   6
-#define TM_DIO   5
+#define TFT_CS   8
+#define TFT_DC   10
+#define TFT_RST  9
 
 // --- 通訊與喇叭腳位 ---
 #if ROLE == 1
   SoftwareSerial SlaveL(2, 3);
   SoftwareSerial SlaveR(4, A5);
-  #define BUZZER_PIN A4  // Master 的喇叭接在 A4
+  #define BUZZER_PIN A4
 #else
-  SoftwareSerial Comm(2, 3); // Slave 統一用 2,3 與 Master 溝通
+  SoftwareSerial Comm(2, 3); // Slave 與 Scoreboard 統一用 2,3
 #endif
 
 // --- 遊戲常數 ---
@@ -37,7 +33,7 @@
 #define PLAYER_SIZE 8
 
 // ==========================================
-// --- 音樂資料與非阻塞播放引擎 (僅 Master 使用) ---
+// --- 音樂資料 (僅 Master 使用) ---
 // ==========================================
 #if ROLE == 1
   #define NOTE_B4  494
@@ -53,21 +49,8 @@
   #define NOTE_B5  988
   #define NOTE_C6  1047
 
-  // 經典開場音樂 (儲存於 Flash 記憶體節省 RAM)
-  const int introMelody[] PROGMEM = {
-    NOTE_B4, NOTE_B5, NOTE_FS5, NOTE_DS5, NOTE_B5, NOTE_FS5, NOTE_DS5,
-    NOTE_C5, NOTE_C6, NOTE_G5, NOTE_E5, NOTE_C6, NOTE_G5, NOTE_E5,
-    NOTE_B4, NOTE_B5, NOTE_FS5, NOTE_DS5, NOTE_B5, NOTE_FS5, NOTE_DS5,
-    NOTE_DS5, NOTE_E5, NOTE_F5, NOTE_F5, NOTE_FS5, NOTE_G5, NOTE_G5, NOTE_GS5, NOTE_A5, NOTE_B5
-  };
-  const int introDurations[] PROGMEM = {
-    150, 150, 150, 150, 75, 75, 150,
-    150, 150, 150, 150, 75, 75, 150,
-    150, 150, 150, 150, 75, 75, 150,
-    75, 75, 75, 75, 75, 75, 75, 75, 75, 300
-  };
-
-  // 死亡音效
+  const int introMelody[] PROGMEM = { NOTE_B4, NOTE_B5, NOTE_FS5, NOTE_DS5, NOTE_B5, NOTE_FS5, NOTE_DS5, NOTE_C5, NOTE_C6, NOTE_G5, NOTE_E5, NOTE_C6, NOTE_G5, NOTE_E5, NOTE_B4, NOTE_B5, NOTE_FS5, NOTE_DS5, NOTE_B5, NOTE_FS5, NOTE_DS5, NOTE_DS5, NOTE_E5, NOTE_F5, NOTE_F5, NOTE_FS5, NOTE_G5, NOTE_G5, NOTE_GS5, NOTE_A5, NOTE_B5 };
+  const int introDurations[] PROGMEM = { 150, 150, 150, 150, 75, 75, 150, 150, 150, 150, 150, 75, 75, 150, 150, 150, 150, 150, 75, 75, 150, 75, 75, 75, 75, 75, 75, 75, 75, 75, 300 };
   const int deathMelody[] PROGMEM = { NOTE_B5, NOTE_F5, NOTE_D5, NOTE_B4 };
   const int deathDurations[] PROGMEM = { 150, 150, 150, 300 };
 
@@ -79,12 +62,8 @@
   const int* currentDurations;
 
   void playMelody(const int* melody, const int* durations, int length) {
-    currentMelody = melody;
-    currentDurations = durations;
-    melodyLength = length;
-    currentNote = 0;
-    isPlayingMusic = true;
-    noteStartTime = millis();
+    currentMelody = melody; currentDurations = durations; melodyLength = length;
+    currentNote = 0; isPlayingMusic = true; noteStartTime = millis();
     int freq = pgm_read_word(&currentMelody[0]);
     if (freq > 0) tone(BUZZER_PIN, freq);
   }
@@ -93,155 +72,87 @@
     if (!isPlayingMusic) return;
     unsigned long currentMillis = millis();
     int duration = pgm_read_word(&currentDurations[currentNote]);
-    int playTime = duration * 0.8; 
-
     if (currentMillis - noteStartTime >= duration) {
       currentNote++;
-      if (currentNote >= melodyLength) {
-        noTone(BUZZER_PIN);
-        isPlayingMusic = false;
-      } else {
+      if (currentNote >= melodyLength) { noTone(BUZZER_PIN); isPlayingMusic = false; } 
+      else {
         int freq = pgm_read_word(&currentMelody[currentNote]);
         if (freq > 0) tone(BUZZER_PIN, freq);
         noteStartTime = currentMillis;
       }
-    } else if (currentMillis - noteStartTime >= playTime) {
-      noTone(BUZZER_PIN);
-    }
+    } else if (currentMillis - noteStartTime >= duration * 0.8) { noTone(BUZZER_PIN); }
   }
 #endif
-// ==========================================
 
-// --- 顯示器與計分板初始化 ---
+// --- 顯示器初始化 ---
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
-TM1638plus tm(TM_STB, TM_CLK, TM_DIO);
 
 // --- 全域遊戲變數 ---
-int p1X = 100, p1Y = 120; // 玩家 1 (Pac-Man)
-int p2X = 860, p2Y = 120; // 玩家 2 (Ghost)
-int p1Dir = 0, p2Dir = 0;
-int score1 = 0, score2 = 0;
-
-// 舊座標 (用於局部重繪，避免閃爍)
+int p1X = 100, p1Y = 120, p2X = 860, p2Y = 120;
+int p1Dir = 0, p2Dir = 0, score1 = 0, score2 = 0;
 int lp1X, lp1Y, lp2X, lp2Y;
+int lastS1 = -1, lastS2 = -1; // 用於計分板重繪判定
 
 void setup() {
   Serial.begin(115200);
   tft.begin();
   tft.setRotation(1);
   tft.fillScreen(ILI9341_BLACK);
-  
-  tm.displayBegin();
-  tm.displayText("READY");
 
   #if ROLE == 1
-    SlaveL.begin(38400);
-    SlaveR.begin(38400);
+    SlaveL.begin(38400); SlaveR.begin(38400);
     pinMode(BUZZER_PIN, OUTPUT);
-    tft.setTextColor(ILI9341_YELLOW);
-    tft.setCursor(100, 110);
-    tft.print("MASTER UNIT");
-    
-    // 播放開場音樂
+    tft.setTextColor(ILI9341_YELLOW); tft.setCursor(100, 110); tft.print("MASTER UNIT");
     playMelody(introMelody, introDurations, 31);
+  #elif ROLE == 4
+    Comm.begin(38400);
+    drawScoreUI(); // 初始化計分板介面
   #else
     Comm.begin(38400);
-    // Slave 的按鈕腳位 (上, 下, 左, 右)
-    pinMode(A0, INPUT_PULLUP);
-    pinMode(A1, INPUT_PULLUP);
-    pinMode(A2, INPUT_PULLUP);
-    pinMode(A3, INPUT_PULLUP);
+    pinMode(A0, INPUT_PULLUP); pinMode(A1, INPUT_PULLUP);
+    pinMode(A2, INPUT_PULLUP); pinMode(A3, INPUT_PULLUP);
   #endif
 }
 
 void loop() {
   #if ROLE == 1
-    // --- MASTER 邏輯 ---
-    handleInputs();
-    updateLogic();
-    syncSlaves();
-    render(320); // 中間螢幕 Offset 是 320
-    updateMusic(); // 更新音樂狀態
+    handleInputs(); updateLogic(); syncSlaves(); render(320); updateMusic();
+  #elif ROLE == 4
+    receiveAndRenderScoreboard();
   #else
-    // --- SLAVE 邏輯 ---
-    sendInput();
-    receiveAndRender();
+    sendInput(); receiveAndRender();
   #endif
-  
   delay(10); 
 }
 
-// --- Master 專用函式 ---
+// --- Master 專用 ---
 #if ROLE == 1
 void handleInputs() {
   if (SlaveL.available()) p1Dir = SlaveL.read();
   if (SlaveR.available()) p2Dir = SlaveR.read();
 }
-
 void updateLogic() {
   auto move = [](int &x, int &y, int dir) {
-    if (dir == 1) y -= 4;
-    if (dir == 2) y += 4;
-    if (dir == 3) x -= 4;
-    if (dir == 4) x += 4;
-    x = constrain(x, 10, TOTAL_W - 10);
-    y = constrain(y, 10, 230);
+    if (dir == 1) y -= 4; if (dir == 2) y += 4;
+    if (dir == 3) x -= 4; if (dir == 4) x += 4;
+    x = constrain(x, 10, TOTAL_W - 10); y = constrain(y, 10, 230);
   };
-  
-  move(p1X, p1Y, p1Dir);
-  move(p2X, p2Y, p2Dir);
-
-  // 碰撞偵測
+  move(p1X, p1Y, p1Dir); move(p2X, p2Y, p2Dir);
   if (abs(p1X - p2X) < 15 && abs(p1Y - p2Y) < 15) {
-    score2++; // 幽靈得分
-    p1X = 100; p2X = 860; // 重置
-    tm.displayIntNum(score2, false);
-    
-    // 播放被抓到的音效
+    score2++; p1X = 100; p2X = 860;
     playMelody(deathMelody, deathDurations, 4);
   }
 }
-
 void syncSlaves() {
-  // 格式: p1X,p1Y,p2X,p2Y,s1,s2
-  String packet = String(p1X) + "," + String(p1Y) + "," + String(p2X) + "," + String(p2Y) + "," + String(score1) + "," + String(score2) + "\n";
-  SlaveL.print(packet);
-  SlaveR.print(packet);
+  String packet = String(p1X)+","+String(p1Y)+","+String(p2X)+","+String(p2Y)+","+String(score1)+","+String(score2)+"\n";
+  SlaveL.print(packet); SlaveR.print(packet);
 }
 #endif
 
-// --- Slave 專用函式 ---
+// --- Slave & Scoreboard 共用解析 ---
 #if ROLE != 1
-void sendInput() {
-  int dir = 0;
-  if (digitalRead(A0) == LOW) dir = 1;
-  else if (digitalRead(A1) == LOW) dir = 2;
-  else if (digitalRead(A2) == LOW) dir = 3;
-  else if (digitalRead(A3) == LOW) dir = 4;
-  
-  if (dir != 0) Comm.write(dir);
-}
-
-void receiveAndRender() {
-  if (Comm.available()) {
-    String data = Comm.readStringUntil('\n');
-    parseData(data);
-    
-    #if ROLE == 2
-      render(0);   // 左屏 Offset
-      tm.displayIntNum(score1, false);
-    #else
-      render(640); // 右屏 Offset
-      tm.displayIntNum(score2, false);
-    #endif
-  }
-}
-
 void parseData(String data) {
-  // 簡易解析
-  int vals[6];
-  int count = 0;
-  int lastPos = 0;
+  int vals[6], count = 0, lastPos = 0;
   for (int i = 0; i < data.length(); i++) {
     if (data[i] == ',' || data[i] == '\n') {
       vals[count++] = data.substring(lastPos, i).toInt();
@@ -249,34 +160,95 @@ void parseData(String data) {
       if (count >= 6) break;
     }
   }
-  p1X = vals[0]; p1Y = vals[1]; p2X = vals[2]; p2Y = vals[3];
-  score1 = vals[4]; score2 = vals[5];
+  if (count >= 6) {
+    p1X = vals[0]; p1Y = vals[1]; p2X = vals[2]; p2Y = vals[3];
+    score1 = vals[4]; score2 = vals[5];
+  }
 }
 #endif
 
-// --- 共用繪圖函式 ---
+// --- Scoreboard (ROLE 4) 專用函式 ---
+#if ROLE == 4
+void drawScoreUI() {
+  tft.fillScreen(ILI9341_BLACK);
+  // 裝飾框
+  tft.drawRect(5, 5, 310, 230, ILI9341_WHITE);
+  tft.drawLine(160, 5, 160, 235, ILI9341_WHITE);
+  
+  // 畫 P1 頭像 (小精靈)
+  tft.fillCircle(80, 60, 30, ILI9341_YELLOW);
+  tft.fillTriangle(80, 60, 115, 40, 115, 80, ILI9341_BLACK);
+  tft.setCursor(45, 100); tft.setTextColor(ILI9341_YELLOW); tft.setTextSize(2);
+  tft.print("PAC-MAN");
+
+  // 畫 P2 頭像 (幽靈)
+  tft.fillCircle(240, 60, 30, ILI9341_RED);
+  tft.fillRect(210, 60, 60, 30, ILI9341_RED);
+  tft.setCursor(215, 100); tft.setTextColor(ILI9341_RED); tft.setTextSize(2);
+  tft.print("GHOST");
+
+  // VS 字樣
+  tft.setCursor(145, 120); tft.setTextColor(ILI9341_WHITE); tft.setTextSize(3);
+  tft.print("VS");
+}
+
+void receiveAndRenderScoreboard() {
+  if (Comm.available()) {
+    String data = Comm.readStringUntil('\n');
+    parseData(data);
+    
+    // 只有分數改變時才更新，避免閃爍
+    if (score1 != lastS1 || score2 != lastS2) {
+      updateScoreText();
+      lastS1 = score1; lastS2 = score2;
+    }
+  }
+}
+
+void updateScoreText() {
+  tft.setTextSize(6);
+  // 更新 P1 分數
+  tft.fillRect(30, 140, 100, 60, ILI9341_BLACK);
+  tft.setCursor(55, 150); tft.setTextColor(ILI9341_YELLOW);
+  tft.print(score1);
+  
+  // 更新 P2 分數
+  tft.fillRect(190, 140, 100, 60, ILI9341_BLACK);
+  tft.setCursor(215, 150); tft.setTextColor(ILI9341_RED);
+  tft.print(score2);
+}
+#endif
+
+// --- Slave 專用 ---
+#if ROLE == 2 || ROLE == 3
+void sendInput() {
+  int dir = 0;
+  if (digitalRead(A0) == LOW) dir = 1;
+  else if (digitalRead(A1) == LOW) dir = 2;
+  else if (digitalRead(A2) == LOW) dir = 3;
+  else if (digitalRead(A3) == LOW) dir = 4;
+  if (dir != 0) Comm.write(dir);
+}
+void receiveAndRender() {
+  if (Comm.available()) {
+    String data = Comm.readStringUntil('\n');
+    parseData(data);
+    render((ROLE == 2) ? 0 : 640);
+  }
+}
+#endif
+
+// --- 共用繪圖 (渲染遊戲畫面) ---
 void render(int offset) {
-  // 擦除舊位置
   auto erase = [&](int x, int y) {
     int lx = x - offset;
-    if (lx > -20 && lx < 340) {
-      tft.fillCircle(lx, y, PLAYER_SIZE, ILI9341_BLACK);
-    }
+    if (lx > -20 && lx < 340) tft.fillCircle(lx, y, PLAYER_SIZE, ILI9341_BLACK);
   };
-
-  // 畫新位置
   auto draw = [&](int x, int y, uint16_t color) {
     int nx = x - offset;
-    if (nx > -10 && nx < 330) {
-      tft.fillCircle(nx, y, PLAYER_SIZE, color);
-    }
+    if (nx > -10 && nx < 330) tft.fillCircle(nx, y, PLAYER_SIZE, color);
   };
-
-  erase(lp1X, lp1Y);
-  erase(lp2X, lp2Y);
-  
-  draw(p1X, p1Y, ILI9341_YELLOW);
-  draw(p2X, p2Y, ILI9341_RED);
-
+  erase(lp1X, lp1Y); erase(lp2X, lp2Y);
+  draw(p1X, p1Y, ILI9341_YELLOW); draw(p2X, p2Y, ILI9341_RED);
   lp1X = p1X; lp1Y = p1Y; lp2X = p2X; lp2Y = p2Y;
 }
