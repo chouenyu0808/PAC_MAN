@@ -1,36 +1,44 @@
 /**
- * PAC-MAN Multi-Screen Edition (4-Screen Version)
+ * PAC-MAN Multi-Screen I2C Edition (Portrait Mode Layout)
  * ----------------------------
- * 1 = Master (中間螢幕 / 遊戲邏輯 / 音效中心)
- * 2 = Slave Left (左邊螢幕 / 玩家 1 輸入)
- * 3 = Slave Right (右邊螢幕 / 玩家 2 輸入)
- * 4 = Scoreboard (計分板螢幕 / 顯示大分數與頭像)
+ * 1 = Master (中間螢幕 240x320 / 偏移 240)
+ * 2 = Slave Left (左邊螢幕 240x320 / 偏移 0)
+ * 3 = Slave Right (右邊螢幕 240x320 / 偏移 480)
+ * 4 = Scoreboard (計分板)
  */
 
-#define ROLE 1  // <--- 修改這裡：1:中, 2:左, 3:右, 4:計分板
+#define ROLE 1
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
-#include <SoftwareSerial.h>
+#include <Wire.h>
 
 // --- 硬體腳位定義 ---
 #define TFT_CS   8
 #define TFT_DC   10
 #define TFT_RST  9
 
-// --- 通訊與喇叭腳位 ---
 #if ROLE == 1
-  SoftwareSerial SlaveL(2, 3);
-  SoftwareSerial SlaveR(4, A5);
-  #define BUZZER_PIN A4
-#else
-  SoftwareSerial Comm(2, 3); // Slave 與 Scoreboard 統一用 2,3
+  #define BUZZER_PIN 5 
 #endif
 
-// --- 遊戲常數 ---
-#define SCREEN_W 320
-#define TOTAL_W  960
+// I2C 位址
+#define ADDR_LEFT  8
+#define ADDR_RIGHT 9
+#define ADDR_SCORE 10
+
+// --- 遊戲常數 (直向拼貼模式) ---
+#define SCREEN_W 240
+#define TOTAL_W  720
+#define SCREEN_H 320
 #define PLAYER_SIZE 8
+
+// --- 全域遊戲變數 ---
+int p1X = 50, p1Y = 160, p2X = 670, p2Y = 160;
+int p1Dir = 0, p2Dir = 0, score1 = 0, score2 = 0;
+int lp1X, lp1Y, lp2X, lp2Y;
+int lastS1 = -1, lastS2 = -1;
+volatile bool dataReceived = false;
 
 // ==========================================
 // --- 音樂資料 (僅 Master 使用) ---
@@ -87,28 +95,103 @@
 // --- 顯示器初始化 ---
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 
-// --- 全域遊戲變數 ---
-int p1X = 100, p1Y = 120, p2X = 860, p2Y = 120;
-int p1Dir = 0, p2Dir = 0, score1 = 0, score2 = 0;
-int lp1X, lp1Y, lp2X, lp2Y;
-int lastS1 = -1, lastS2 = -1; // 用於計分板重繪判定
+// --- I2C 接收回呼 ---
+void receiveEvent(int howMany) {
+  if (howMany >= 12) {
+    p1X = Wire.read() | (Wire.read() << 8);
+    p1Y = Wire.read() | (Wire.read() << 8);
+    p2X = Wire.read() | (Wire.read() << 8);
+    p2Y = Wire.read() | (Wire.read() << 8);
+    score1 = Wire.read() | (Wire.read() << 8);
+    score2 = Wire.read() | (Wire.read() << 8);
+    dataReceived = true;
+  }
+}
+
+void requestEvent() {
+  int dir = 0;
+  if (digitalRead(A0) == LOW) dir = 1;
+  else if (digitalRead(A1) == LOW) dir = 2;
+  else if (digitalRead(A2) == LOW) dir = 3;
+  else if (digitalRead(A3) == LOW) dir = 4;
+  Wire.write(dir);
+}
+
+// --- 適合 720x320 的迷宮 ---
+struct Wall {
+  int x, y, w, h;
+};
+
+const Wall walls[] PROGMEM = {
+  {0, 0, 720, 5}, {0, 315, 720, 5}, // 外框上下
+  {0, 0, 5, 320}, {715, 0, 5, 320}, // 外框左右
+  {60, 60, 120, 20}, {240, 60, 240, 20}, {540, 60, 120, 20}, // 上排牆
+  {110, 120, 20, 80}, {350, 120, 20, 80}, {590, 120, 20, 80}, // 中排柱子
+  {60, 240, 240, 20}, {420, 240, 240, 20}, // 下排牆
+  {240, 150, 240, 20} // 中間橫條
+};
+const int wallCount = sizeof(walls) / sizeof(Wall);
+
+bool checkCollision(int x, int y) {
+  for (int i = 0; i < wallCount; i++) {
+    int wx = pgm_read_word(&walls[i].x);
+    int wy = pgm_read_word(&walls[i].y);
+    int ww = pgm_read_word(&walls[i].w);
+    int wh = pgm_read_word(&walls[i].h);
+    // 檢查矩形碰撞 (考慮 Player 大小)
+    if (x + PLAYER_SIZE > wx && x - PLAYER_SIZE < wx + ww &&
+        y + PLAYER_SIZE > wy && y - PLAYER_SIZE < wy + wh) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void drawMaze(int offset) {
+  uint16_t wallColor = ILI9341_BLUE;
+  for (int i = 0; i < wallCount; i++) {
+    int x = pgm_read_word(&walls[i].x);
+    int y = pgm_read_word(&walls[i].y);
+    int w = pgm_read_word(&walls[i].w);
+    int h = pgm_read_word(&walls[i].h);
+    
+    int lx = x - offset;
+    if (lx + w > 0 && lx < 240) {
+      int dx = max(0, lx);
+      int dw = min(w, 240 - lx);
+      if (lx < 0) dw = w + lx;
+      tft.fillRect(dx, y, dw, h, wallColor);
+    }
+  }
+}
 
 void setup() {
-  Serial.begin(115200);
   tft.begin();
-  tft.setRotation(1);
+  tft.setRotation(0); // 全部設為直向 (Portrait)
+  
+  #if ROLE == 1
+    Wire.begin(); 
+  #elif ROLE == 2
+    Wire.begin(ADDR_LEFT); Wire.onReceive(receiveEvent); Wire.onRequest(requestEvent);
+  #elif ROLE == 3
+    Wire.begin(ADDR_RIGHT); Wire.onReceive(receiveEvent); Wire.onRequest(requestEvent);
+  #elif ROLE == 4
+    Wire.begin(ADDR_SCORE); Wire.onReceive(receiveEvent);
+  #endif
+
   tft.fillScreen(ILI9341_BLACK);
 
   #if ROLE == 1
-    SlaveL.begin(38400); SlaveR.begin(38400);
-    pinMode(BUZZER_PIN, OUTPUT);
-    tft.setTextColor(ILI9341_YELLOW); tft.setCursor(100, 110); tft.print("MASTER UNIT");
-    playMelody(introMelody, introDurations, 31);
+    drawMaze(240); pinMode(BUZZER_PIN, OUTPUT); playMelody(introMelody, introDurations, 31);
+  #elif ROLE == 2
+    drawMaze(0);
+  #elif ROLE == 3
+    drawMaze(480);
   #elif ROLE == 4
-    Comm.begin(38400);
-    drawScoreUI(); // 初始化計分板介面
-  #else
-    Comm.begin(38400);
+    drawScoreUI();
+  #endif
+
+  #if ROLE == 2 || ROLE == 3
     pinMode(A0, INPUT_PULLUP); pinMode(A1, INPUT_PULLUP);
     pinMode(A2, INPUT_PULLUP); pinMode(A3, INPUT_PULLUP);
   #endif
@@ -116,139 +199,84 @@ void setup() {
 
 void loop() {
   #if ROLE == 1
-    handleInputs(); updateLogic(); syncSlaves(); render(320); updateMusic();
+    handleI2CInputs(); updateLogic(); syncI2CSlaves(); render(240); updateMusic();
   #elif ROLE == 4
-    receiveAndRenderScoreboard();
+    if (dataReceived) { 
+      if (score1 != lastS1 || score2 != lastS2) { updateScoreText(); lastS1 = score1; lastS2 = score2; }
+      dataReceived = false;
+    }
   #else
-    sendInput(); receiveAndRender();
+    if (dataReceived) { render((ROLE == 2) ? 0 : 480); dataReceived = false; }
   #endif
   delay(10); 
 }
 
-// --- Master 專用 ---
 #if ROLE == 1
-void handleInputs() {
-  if (SlaveL.available()) p1Dir = SlaveL.read();
-  if (SlaveR.available()) p2Dir = SlaveR.read();
+void handleI2CInputs() {
+  Wire.requestFrom(ADDR_LEFT, 1); if (Wire.available()) p1Dir = Wire.read();
+  Wire.requestFrom(ADDR_RIGHT, 1); if (Wire.available()) p2Dir = Wire.read();
 }
 void updateLogic() {
   auto move = [](int &x, int &y, int dir) {
-    if (dir == 1) y -= 4; if (dir == 2) y += 4;
-    if (dir == 3) x -= 4; if (dir == 4) x += 4;
-    x = constrain(x, 10, TOTAL_W - 10); y = constrain(y, 10, 230);
+    int nextX = x, nextY = y;
+    if (dir == 1) nextY -= 4; else if (dir == 2) nextY += 4;
+    else if (dir == 3) nextX -= 4; else if (dir == 4) nextX += 4;
+    
+    if (!checkCollision(nextX, nextY)) {
+      x = nextX; y = nextY;
+    }
+    x = constrain(x, 10, TOTAL_W - 10); y = constrain(y, 10, 310);
   };
   move(p1X, p1Y, p1Dir); move(p2X, p2Y, p2Dir);
   if (abs(p1X - p2X) < 15 && abs(p1Y - p2Y) < 15) {
-    score2++; p1X = 100; p2X = 860;
-    playMelody(deathMelody, deathDurations, 4);
+    score2++; p1X = 50; p1Y = 160; p2X = 670; p2Y = 160; playMelody(deathMelody, deathDurations, 4);
   }
 }
-void syncSlaves() {
-  String packet = String(p1X)+","+String(p1Y)+","+String(p2X)+","+String(p2Y)+","+String(score1)+","+String(score2)+"\n";
-  SlaveL.print(packet); SlaveR.print(packet);
-}
-#endif
-
-// --- Slave & Scoreboard 共用解析 ---
-#if ROLE != 1
-void parseData(String data) {
-  int vals[6], count = 0, lastPos = 0;
-  for (int i = 0; i < data.length(); i++) {
-    if (data[i] == ',' || data[i] == '\n') {
-      vals[count++] = data.substring(lastPos, i).toInt();
-      lastPos = i + 1;
-      if (count >= 6) break;
-    }
-  }
-  if (count >= 6) {
-    p1X = vals[0]; p1Y = vals[1]; p2X = vals[2]; p2Y = vals[3];
-    score1 = vals[4]; score2 = vals[5];
-  }
+void syncI2CSlaves() {
+  auto send = [](int addr) {
+    Wire.beginTransmission(addr);
+    int d[] = {p1X, p1Y, p2X, p2Y, score1, score2};
+    for(int i=0; i<6; i++) { Wire.write(d[i] & 0xFF); Wire.write(d[i] >> 8); }
+    Wire.endTransmission();
+  };
+  send(ADDR_LEFT); send(ADDR_RIGHT); send(ADDR_SCORE);
 }
 #endif
 
-// --- Scoreboard (ROLE 4) 專用函式 ---
 #if ROLE == 4
 void drawScoreUI() {
   tft.fillScreen(ILI9341_BLACK);
-  // 裝飾框
-  tft.drawRect(5, 5, 310, 230, ILI9341_WHITE);
-  tft.drawLine(160, 5, 160, 235, ILI9341_WHITE);
-  
-  // 畫 P1 頭像 (小精靈)
-  tft.fillCircle(80, 60, 30, ILI9341_YELLOW);
-  tft.fillTriangle(80, 60, 115, 40, 115, 80, ILI9341_BLACK);
-  tft.setCursor(45, 100); tft.setTextColor(ILI9341_YELLOW); tft.setTextSize(2);
-  tft.print("PAC-MAN");
-
-  // 畫 P2 頭像 (幽靈)
-  tft.fillCircle(240, 60, 30, ILI9341_RED);
-  tft.fillRect(210, 60, 60, 30, ILI9341_RED);
-  tft.setCursor(215, 100); tft.setTextColor(ILI9341_RED); tft.setTextSize(2);
-  tft.print("GHOST");
-
-  // VS 字樣
-  tft.setCursor(145, 120); tft.setTextColor(ILI9341_WHITE); tft.setTextSize(3);
-  tft.print("VS");
+  tft.drawRect(5, 5, 230, 310, ILI9341_WHITE);
+  tft.fillCircle(120, 60, 30, ILI9341_YELLOW);
+  tft.setCursor(80, 100); tft.setTextColor(ILI9341_YELLOW); tft.setTextSize(2); tft.print("PAC-MAN");
+  tft.fillCircle(120, 200, 30, ILI9341_RED);
+  tft.setCursor(90, 240); tft.setTextColor(ILI9341_RED); tft.setTextSize(2); tft.print("GHOST");
 }
-
-void receiveAndRenderScoreboard() {
-  if (Comm.available()) {
-    String data = Comm.readStringUntil('\n');
-    parseData(data);
-    
-    // 只有分數改變時才更新，避免閃爍
-    if (score1 != lastS1 || score2 != lastS2) {
-      updateScoreText();
-      lastS1 = score1; lastS2 = score2;
-    }
-  }
-}
-
 void updateScoreText() {
-  tft.setTextSize(6);
-  // 更新 P1 分數
-  tft.fillRect(30, 140, 100, 60, ILI9341_BLACK);
-  tft.setCursor(55, 150); tft.setTextColor(ILI9341_YELLOW);
-  tft.print(score1);
-  
-  // 更新 P2 分數
-  tft.fillRect(190, 140, 100, 60, ILI9341_BLACK);
-  tft.setCursor(215, 150); tft.setTextColor(ILI9341_RED);
-  tft.print(score2);
+  tft.setTextSize(4);
+  tft.fillRect(80, 120, 100, 40, ILI9341_BLACK);
+  tft.setCursor(105, 120); tft.setTextColor(ILI9341_YELLOW); tft.print(score1);
+  tft.fillRect(80, 260, 100, 40, ILI9341_BLACK);
+  tft.setCursor(105, 260); tft.setTextColor(ILI9341_RED); tft.print(score2);
 }
 #endif
 
-// --- Slave 專用 ---
-#if ROLE == 2 || ROLE == 3
-void sendInput() {
-  int dir = 0;
-  if (digitalRead(A0) == LOW) dir = 1;
-  else if (digitalRead(A1) == LOW) dir = 2;
-  else if (digitalRead(A2) == LOW) dir = 3;
-  else if (digitalRead(A3) == LOW) dir = 4;
-  if (dir != 0) Comm.write(dir);
-}
-void receiveAndRender() {
-  if (Comm.available()) {
-    String data = Comm.readStringUntil('\n');
-    parseData(data);
-    render((ROLE == 2) ? 0 : 640);
-  }
-}
-#endif
-
-// --- 共用繪圖 (渲染遊戲畫面) ---
 void render(int offset) {
   auto erase = [&](int x, int y) {
     int lx = x - offset;
-    if (lx > -20 && lx < 340) tft.fillCircle(lx, y, PLAYER_SIZE, ILI9341_BLACK);
+    if (lx > -20 && lx < 260) tft.fillCircle(lx, y, PLAYER_SIZE + 1, ILI9341_BLACK);
   };
-  auto draw = [&](int x, int y, uint16_t color) {
-    int nx = x - offset;
-    if (nx > -10 && nx < 330) tft.fillCircle(nx, y, PLAYER_SIZE, color);
-  };
+  if (millis() % 500 < 20) drawMaze(offset);
   erase(lp1X, lp1Y); erase(lp2X, lp2Y);
-  draw(p1X, p1Y, ILI9341_YELLOW); draw(p2X, p2Y, ILI9341_RED);
+  int n1x = p1X - offset;
+  if (n1x > -10 && n1x < 250) {
+    tft.fillCircle(n1x, p1Y, PLAYER_SIZE, ILI9341_YELLOW);
+    tft.fillTriangle(n1x, p1Y, n1x+10, p1Y-5, n1x+10, p1Y+5, ILI9341_BLACK);
+  }
+  int n2x = p2X - offset;
+  if (n2x > -10 && n2x < 250) {
+    tft.fillCircle(n2x, p2Y, PLAYER_SIZE, ILI9341_RED);
+    tft.fillRect(n2x - PLAYER_SIZE, p2Y, PLAYER_SIZE * 2, PLAYER_SIZE, ILI9341_RED);
+  }
   lp1X = p1X; lp1Y = p1Y; lp2X = p2X; lp2Y = p2Y;
 }
