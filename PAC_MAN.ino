@@ -2,7 +2,7 @@
  * PAC-MAN Multi-Screen - Complex Maze Edition (Fixed Rendering & AI)
  */
 
-#define ROLE 3 // 1=中, 2=左, 3=右, 4=計分板
+#define ROLE 1// 1=中, 2=左, 3=右, 4=計分板
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
@@ -616,16 +616,21 @@ void drawMaze(int offset) {
     int w = pgm_read_word(&walls[i].w);
     int h = pgm_read_word(&walls[i].h);
     int lx = x - offset;
+    
+    // 如果牆壁有任何一部分落在這個螢幕的 0~240 範圍內
     if (lx + w > 0 && lx < 240) {
-      tft.fillRect(max(0, lx), y, min(w, 240 - lx), h, ILI9341_BLUE);
+      int drawX = max(0, lx);
+      // 計算實際要在這個螢幕上畫出的寬度
+      int drawW = min(lx + w, 240) - drawX;
+      tft.fillRect(drawX, y, drawW, h, ILI9341_BLUE);
     }
   }
   
   // 繪製點點 (寬 240 px 顯示限制)
   for (int i = 0; i < pelletCount; i++) {
     if (!pelletEaten[i]) {
-      int px = pgm_read_word(&pellets[i].x);
-      int py = pgm_read_word(&pellets[i].y);
+      int px = pgm_read_word(&pellets[i].x) + 10;
+      int py = pgm_read_word(&pellets[i].y) + 10;
       bool isPower = pgm_read_byte(&pellets[i].isPower);
       int lx = px - offset;
       if (lx > 0 && lx < 240) {
@@ -779,10 +784,10 @@ void updateLogic() {
   auto checkTurn = [](int x, int y, int &nextDir, int &currentDir) {
     if (nextDir == 0 || nextDir == currentDir) return;
     int nx = x, ny = y;
-    if (nextDir == 1) ny -= 4;
-    else if (nextDir == 2) ny += 4;
-    else if (nextDir == 3) nx -= 4;
-    else if (nextDir == 4) nx += 4;
+    if (nextDir == 1) ny -= 5;
+    else if (nextDir == 2) ny += 5;
+    else if (nextDir == 3) nx -= 5;
+    else if (nextDir == 4) nx += 5;
     
     if (!checkCollision(nx, ny)) {
       currentDir = nextDir; // 如果轉向後不會撞牆，就正式轉向
@@ -795,10 +800,10 @@ void updateLogic() {
 
   auto move = [](int &x, int &y, int dir) {
     int nx = x, ny = y;
-    if (dir == 1) ny -= 4;
-    else if (dir == 2) ny += 4;
-    else if (dir == 3) nx -= 4;
-    else if (dir == 4) nx += 4;
+    if (dir == 1) ny -= 5;
+    else if (dir == 2) ny += 5;
+    else if (dir == 3) nx -= 5;
+    else if (dir == 4) nx += 5;
     if (!checkCollision(nx, ny)) {
       x = nx;
       y = ny;
@@ -813,8 +818,8 @@ void updateLogic() {
   // 檢查是否吃到點點
   for (int i = 0; i < pelletCount; i++) {
     if (!pelletEaten[i]) {
-      int px = pgm_read_word(&pellets[i].x);
-      int py = pgm_read_word(&pellets[i].y);
+      int px = pgm_read_word(&pellets[i].x) + 10;
+      int py = pgm_read_word(&pellets[i].y) + 10;
       bool isPower = pgm_read_byte(&pellets[i].isPower);
       
       if (abs(p1X - px) < 12 && abs(p1Y - py) < 12) {
@@ -937,10 +942,12 @@ void render(int offset) {
       int wy = pgm_read_word(&walls[i].y);
       int ww = pgm_read_word(&walls[i].w);
       int wh = pgm_read_word(&walls[i].h);
-      if (x + 12 > wx && x - 12 < wx + ww && y + 12 > wy && y - 12 < wy + wh) {
+      if (x + 16 >= wx && x - 16 <= wx + ww && y + 16 >= wy && y - 16 <= wy + wh) {
         int lx = wx - offset;
         if (lx + ww > 0 && lx < 240) {
-          tft.fillRect(max(0, lx), wy, min(ww, 240 - lx), wh, ILI9341_BLUE);
+          int drawX = max(0, lx);
+          int drawW = min(lx + ww, 240) - drawX;
+          tft.fillRect(drawX, wy, drawW, wh, ILI9341_BLUE);
         }
       }
     }
@@ -948,8 +955,8 @@ void render(int offset) {
     // 重建被踩踏覆蓋區域內的未吃點點
     for (int i = 0; i < pelletCount; i++) {
       if (!pelletEaten[i]) {
-        int px = pgm_read_word(&pellets[i].x);
-        int py = pgm_read_word(&pellets[i].y);
+        int px = pgm_read_word(&pellets[i].x) + 10;
+        int py = pgm_read_word(&pellets[i].y) + 10;
         bool isPower = pgm_read_byte(&pellets[i].isPower);
         if (abs(px - x) < 15 && abs(py - y) < 15) {
           int lx = px - offset;
