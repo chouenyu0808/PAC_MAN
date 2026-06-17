@@ -2,7 +2,7 @@
  * PAC-MAN Multi-Screen - Complex Maze Edition (Fixed Rendering & AI)
  */
 
-#define ROLE 2 // 1=中, 2=左, 3=右, 4=計分板
+#define ROLE 1 // 1=中, 2=左, 3=右, 4=計分板
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
@@ -27,8 +27,8 @@ Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 
 // --- 初始座標：經由地圖設計器自訂配置 ---
 int p1X = 20, p1Y = 20;
-int p2X = 700, p2Y = 20;
-int p1Dir = 0, p2Dir = 0, score1 = 0, score2 = 0;
+int p2X = 680, p2Y = 20;
+int p1Dir = 0, p2Dir = 0, p1NextDir = 0, p2NextDir = 0, score1 = 0, score2 = 0;
 int lp1X, lp1Y, lp2X, lp2Y;
 int gX[NUM_GHOSTS], gY[NUM_GHOSTS], lgX[NUM_GHOSTS], lgY[NUM_GHOSTS];
 volatile bool dataReceived = false;
@@ -758,22 +758,51 @@ void handleI2CInputs() {
   Wire.requestFrom(ADDR_LEFT, 1); 
   if (Wire.available()) {
     int dir = Wire.read();
-    if (dir != 0) p1Dir = dir; // 只有在有按鍵按下時才更新方向
+    if (dir != 0) p1NextDir = dir; // 緩衝玩家1的方向輸入
   }
   
   Wire.requestFrom(ADDR_RIGHT, 1); 
   if (Wire.available()) {
     int dir = Wire.read();
-    if (dir != 0) p2Dir = dir; // 只有在有按鍵按下時才更新方向
+    if (dir != 0) p2NextDir = dir; // 緩衝玩家2的方向輸入
   }
 }
 void updateLogic() {
   // 當玩家按任何方向按鈕 (開始移動/開始遊戲)
-  if (!gameStarted && (p1Dir != 0 || p2Dir != 0)) {
+  if (!gameStarted && (p1NextDir != 0 || p2NextDir != 0)) {
     gameStarted = true;
     gameStartTime = millis();
   }
   
+  // 檢查預轉向是否合法，合法則更新當前方向
+  auto checkTurn = [](int &x, int &y, int &nextDir, int &currentDir) {
+    if (nextDir == 0 || nextDir == currentDir) return;
+    int nx = x, ny = y;
+    if (nextDir == 1) ny -= 4;
+    else if (nextDir == 2) ny += 4;
+    else if (nextDir == 3) nx -= 4;
+    else if (nextDir == 4) nx += 4;
+    
+    if (!checkCollision(nx, ny)) {
+      // 判斷是否為 90 度轉彎 (垂直轉向)
+      bool isPerpendicular = (currentDir == 1 || currentDir == 2) && (nextDir == 3 || nextDir == 4) ||
+                             (currentDir == 3 || currentDir == 4) && (nextDir == 1 || nextDir == 2);
+                             
+      // 為了避免卡在牆壁邊緣，如果是 90 度轉彎，嘗試將玩家對齊到最近的 10 的倍數網格上
+      if (isPerpendicular) {
+         if (nextDir == 1 || nextDir == 2) {
+             x = ((x + 5) / 10) * 10; // 對齊 X 軸
+         } else {
+             y = ((y + 5) / 10) * 10; // 對齊 Y 軸
+         }
+      }
+      currentDir = nextDir; // 正式轉向
+      nextDir = 0; // 清除緩衝
+    }
+  };
+
+  checkTurn(p1X, p1Y, p1NextDir, p1Dir);
+  checkTurn(p2X, p2Y, p2NextDir, p2Dir);
 
   auto move = [](int &x, int &y, int dir) {
     int nx = x, ny = y;
