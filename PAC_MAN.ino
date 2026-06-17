@@ -2,7 +2,7 @@
  * PAC-MAN Multi-Screen - Complex Maze Edition (Fixed Rendering & AI)
  */
 
-#define ROLE 1 // 1=中, 2=左, 3=右, 4=計分板
+#define ROLE 3 // 1=中, 2=左, 3=右, 4=計分板
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
@@ -26,8 +26,8 @@ Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 #define NUM_GHOSTS 4
 
 // --- 初始座標：經由地圖設計器自訂配置 ---
-int p1X = 20, p1Y = 20;
-int p2X = 680, p2Y = 20;
+int p1X = 280, p1Y = 160;
+int p2X = 440, p2Y = 160;
 int p1Dir = 0, p2Dir = 0, p1NextDir = 0, p2NextDir = 0, score1 = 0, score2 = 0;
 int lp1X, lp1Y, lp2X, lp2Y;
 int gX[NUM_GHOSTS], gY[NUM_GHOSTS], lgX[NUM_GHOSTS], lgY[NUM_GHOSTS];
@@ -331,7 +331,8 @@ const Wall walls[] PROGMEM = {
   {520, 280, 30, 20},
   {580, 250, 10, 10},
   {480, 250, 10, 30},
-  {400, 250, 10, 10}
+  {400, 250, 10, 10},
+  {200, 250, 20, 10}
 };
 const int wallCount = sizeof(walls) / sizeof(Wall);
 
@@ -775,7 +776,7 @@ void updateLogic() {
   }
   
   // 檢查預轉向是否合法，合法則更新當前方向
-  auto checkTurn = [](int &x, int &y, int &nextDir, int &currentDir) {
+  auto checkTurn = [](int x, int y, int &nextDir, int &currentDir) {
     if (nextDir == 0 || nextDir == currentDir) return;
     int nx = x, ny = y;
     if (nextDir == 1) ny -= 4;
@@ -784,19 +785,7 @@ void updateLogic() {
     else if (nextDir == 4) nx += 4;
     
     if (!checkCollision(nx, ny)) {
-      // 判斷是否為 90 度轉彎 (垂直轉向)
-      bool isPerpendicular = (currentDir == 1 || currentDir == 2) && (nextDir == 3 || nextDir == 4) ||
-                             (currentDir == 3 || currentDir == 4) && (nextDir == 1 || nextDir == 2);
-                             
-      // 為了避免卡在牆壁邊緣，如果是 90 度轉彎，嘗試將玩家對齊到最近的 10 的倍數網格上
-      if (isPerpendicular) {
-         if (nextDir == 1 || nextDir == 2) {
-             x = ((x + 5) / 10) * 10; // 對齊 X 軸
-         } else {
-             y = ((y + 5) / 10) * 10; // 對齊 Y 軸
-         }
-      }
-      currentDir = nextDir; // 正式轉向
+      currentDir = nextDir; // 如果轉向後不會撞牆，就正式轉向
       nextDir = 0; // 清除緩衝
     }
   };
@@ -903,8 +892,10 @@ void updateLogic() {
     
     if (abs(p1X - gX[i]) < 12 && abs(p1Y - gY[i]) < 12) {
       score2++;
-      p1X = 170;
-      p1Y = 30;
+      p1X = 280;
+      p1Y = 160;
+      p2X = 440;
+      p2Y = 160;
       gameStarted = false;
       gX[0] = 320; gY[0] = 160;
       gX[1] = 345; gY[1] = 160;
@@ -914,8 +905,10 @@ void updateLogic() {
     }
     if (abs(p2X - gX[i]) < 12 && abs(p2Y - gY[i]) < 12) {
       score1++;
-      p2X = 420;
-      p2Y = 110;
+      p1X = 280;
+      p1Y = 160;
+      p2X = 440;
+      p2Y = 160;
       gameStarted = false;
       gX[0] = 320; gY[0] = 160;
       gX[1] = 345; gY[1] = 160;
@@ -977,7 +970,8 @@ void render(int offset) {
     if (x == lx_old && y == ly_old) return; // 沒動就不抹除
     int l_offset_x = lx_old - offset;
     if (l_offset_x > -20 && l_offset_x < 260) {
-      tft.fillCircle(l_offset_x, ly_old, PLAYER_SIZE + 1, ILI9341_BLACK);
+      // 使用方形抹除，確保能完全覆蓋幽靈的方形裙襬部分 (原本的圓形抹除會漏掉角落)
+      tft.fillRect(l_offset_x - PLAYER_SIZE - 1, ly_old - PLAYER_SIZE - 1, (PLAYER_SIZE + 1) * 2, (PLAYER_SIZE + 1) * 2, ILI9341_BLACK);
       redrawWallNear(lx_old, ly_old);
     }
   };
