@@ -1,54 +1,95 @@
-# [Bug Fix & 優化建議] 多螢幕 I2C 通訊與遊戲邏輯隱患修正
+# [Bug Fix & Root Cause Analysis] 多螢幕小精靈「穿牆 (Wall-Clipping)」漏洞修復
 
-## 📝 概述
-這次的更新大幅改善了先前的陣列語法問題，並加入了 90 度轉角緩衝機制，體驗提升很多！但在實際硬體運行上，目前的架構仍有幾個會導致「畫面撕裂/閃爍」、「通訊當機」以及「效能異常」的底層隱患。
+## 📝 總結 (Overview)
+目前在多螢幕 I2C 叢集測試中，發現玩家與幽靈會出現無視物理碰撞、直接穿透牆壁的嚴重 Bug。經過逐步 Debug 與記憶體狀態追蹤，確認此現象並非單一錯誤，而是由三個不同維度的邏輯缺陷交互作用（Race Condition / State Machine Flaw / Hitbox Overflow）所導致。
 
-建議進行以下修正，以確保多微控制器環境下的系統穩定性。
-
----
-
-## 🛑 1. I2C 緩衝區滿載邊緣警告 (極度危險)
-
-**問題描述：**
-在 `syncI2CSlaves()` 函式中，目前的封包大小精準踩在邊界上：
-- 玩家資料與分數：8 個 `int` = 16 Bytes
-- 幽靈資料：8 個 `int` = 16 Bytes
-- **總計：32 Bytes**
-
-標準 Arduino `<Wire.h>` 的底層硬體緩衝區極限剛好就是 32 Bytes。目前的寫法雖然勉強能過關，但這是一顆定時炸彈。未來只要多傳遞任何一個變數（例如遊戲狀態旗標），封包就會直接被硬體截斷，導致 Slave 座標錯亂或當機。
-
-**建議動作：**
-目前若不想大改，請務必在該段程式碼旁加上醒目的警告註解。若未來有擴充計畫，必須將 `sendData` 拆分成兩次傳輸（例如：封包A傳玩家、封包B傳幽靈）。
+本 PR 針對以下三個核心層面進行修復：
+1. **幽靈狀態機越界**：修復全域範圍的異常觸發傳送。
+2. **座標對齊運算順序錯誤**：修復轉角預判機制導致的座標強制覆寫。
+3. **碰撞體積與網格衝突**：修正實體半徑與地圖巷道寬度的數學矛盾。
 
 ---
 
-## 🐛 2. Slave 端中斷資料競爭 (Data Race) 與畫面撕裂
+## 🔍 核心問題 1：幽靈的全域瞬移 (Global Teleportation Bug)
 
-**問題描述：**
-在 Slave (ROLE 2, 3, 4) 的 `loop()` 中，一旦 `dataReceived` 為 `true` 就直接呼叫 `render()` 或 `updateScoreText()`。
-由於 I2C 的 `receiveEvent` 是中斷驅動 (Interrupt-driven)，若主迴圈畫畫面畫到一半時收到 Master 傳來的新資料，中斷會強制觸發並更新底層變數。這會導致在同一幀內讀取到「一半舊、一半新」的座標，螢幕上會出現物件閃現或畫面撕裂 (Tearing)。
+### 📌 發生原因
+在 `updateLogic()` 處理幽靈釋放機制的邏輯中，觸發條件寫得過於寬鬆：`if (gY[i] >= 130)`。
+這個判斷式原本的意圖是「檢查幽靈是否還在牢籠區」，但因為缺乏 X 軸的約束，導致整個地圖下半部（Y ≧ 130 的所有區域）變成了巨大的觸發區。一旦遊戲開始，只要幽靈走到地圖下方，就會不斷觸發條件，導致其座標被強制覆寫回中央 `(360, 110)`。在 Slave 端（左右螢幕）的視覺表現上，就是幽靈突然穿過半張地圖。
 
-**修正方式：**
-在提取資料進行渲染前，必須先關閉中斷鎖定變數，重置旗標後再重新開啟中斷：
+### 🛠 修復細節
+嚴格限縮 `AABB` (Axis-Aligned Bounding Box) 觸發範圍，確保只有真正處於牢籠區內的幽靈才會執行釋放邏輯。
 
 ```cpp
-void loop() {
-#if ROLE == 1
-  handleI2CInputs(); updateLogic(); syncI2CSlaves(); render(240); updateMusic();
-#elif ROLE == 4
-  if (dataReceived) { 
-    noInterrupts(); // 關閉中斷
-    dataReceived = false; 
-    interrupts();   // 重啟中斷
-    updateScoreText(); 
-  }
-#else
-  if (dataReceived) { 
-    noInterrupts(); // 關閉中斷
-    dataReceived = false; 
-    interrupts();   // 重啟中斷
-    render((ROLE == 2) ? 0 : 480); 
-  }
-#endif
-  delay(15);
+// ❌ [原始邏輯] 缺乏 X 軸邊界，導致全域觸發
+/*
+if (gY[i] >= 130) {
+  gX[i] = 360;
+  gY[i] = 110;
+  ...
 }
+*/
+
+// ✅ [修復邏輯] 嚴格定義牢籠的 Bounding Box (X: 290~430, Y: 130~190)
+if (gX[i] >= 290 && gX[i] <= 430 && gY[i] >= 130 && gY[i] <= 190) {
+  gX[i] = 360;
+  gY[i] = 110;
+  gDirs[i] = random(1, 5); // 釋放時給予隨機初始方向
+}
+
+
+核心問題 2：玩家轉角對齊導致的強制擠壓 (Coordinate Snap Corruption)
+📌 發生原因
+為了讓玩家能順利進入 90 度的巷道，原本的 checkTurn 實作了將座標「對齊到 10 的倍數網格」的功能 (snap-to-grid)。
+然而，原本的演算法在執行順序上有致命的瑕疵：它是「先檢查下一步 (nx, ny) 是否撞牆」，確認沒撞牆後，才把目前的 x 或 y 加上 5 個像素進行對齊。
+這意味著，當玩家貼著牆壁並輸入轉向時，這個「加 5 像素的對齊偏移量」完全繞過了 checkCollision 的檢查。這會直接把玩家的座標覆寫到牆壁內，一旦座標落入牆內，後續的碰撞運算就會完全失效，讓玩家得以在牆體內自由移動。
+🛠 修復細節
+導入「預先計算 (Look-ahead)」機制。先算出對齊後的新座標 (snapX, snapY)，接著對這個虛擬的座標做「原地」與「下一步」的雙重碰撞檢查，確認絕對安全後才提交狀態。
+
+// ✅ [修復邏輯] 重構 checkTurn 演算法
+auto checkTurn = [](int &x, int &y, int &nextDir, int &currentDir) {
+  if (nextDir == 0 || nextDir == currentDir) return;
+
+  int snapX = x, snapY = y;
+  
+  // 加上括號確保 C++ 邏輯運算子優先權無誤
+  bool isPerpendicular = ((currentDir == 1 || currentDir == 2) && (nextDir == 3 || nextDir == 4)) ||
+                         ((currentDir == 3 || currentDir == 4) && (nextDir == 1 || nextDir == 2));
+
+  // 1. 產生虛擬對齊座標 (Look-ahead)
+  if (isPerpendicular) {
+     if (nextDir == 1 || nextDir == 2) snapX = ((x + 5) / 10) * 10;
+     else snapY = ((y + 5) / 10) * 10;
+  }
+
+  // 2. 基於虛擬座標，計算跨出下一步的座標
+  int nx = snapX, ny = snapY;
+  if (nextDir == 1) ny -= 4;
+  else if (nextDir == 2) ny += 4;
+  else if (nextDir == 3) nx -= 4;
+  else if (nextDir == 4) nx += 4;
+
+  // 3. 雙重 AABB 碰撞驗證：確保對齊後不會卡進牆壁，且下一步合法
+  if (!checkCollision(nx, ny) && !checkCollision(snapX, snapY)) {
+    x = snapX;             // 提交座標
+    y = snapY;             // 提交座標
+    currentDir = nextDir;  // 更新實際方向
+    nextDir = 0;           // 清空輸入緩衝
+  }
+};
+
+
+
+核心問題 3：物理碰撞體積與地圖網格的數學矛盾 (Hitbox Size Mismatch)
+📌 發生原因
+檢查 walls 陣列的資料結構，許多牆壁與牆壁之間的縫隙寬度僅有 10px（例如 y=10 與 y=30 的區間，扣掉高度本身，實體通道寬度為 10）。
+但是，遊戲宣告的 #define PLAYER_SIZE 8 指的是半徑，也就是角色的碰撞直徑高達 16px。
+從數學與物理學角度來看，16px 的剛體無法塞入 10px 的通道。當玩家在死胡同被卡住並連續輸入方向鍵時，會不斷觸發上述的「對齊 Bug」將自己強行擠破牆壁。
+🛠 修復細節
+重新定義實體的半徑參數，確保角色直徑小於地圖中最窄的通道寬度（10px），讓碰撞演算法得以正常運作。
+
+
+// ❌ [原始設定] 直徑為 16px
+// #define PLAYER_SIZE 8
+
+// ✅ [修復設定] 將半徑改為 4 (直徑 8px)，確保能合法通過 10px 巷道
+#define PLAYER_SIZE 4
