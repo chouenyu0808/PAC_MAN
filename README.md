@@ -35,3 +35,61 @@ if (gX[i] >= 290 && gX[i] <= 430 && gY[i] >= 130 && gY[i] <= 190) {
   gY[i] = 110;
   gDirs[i] = random(1, 5); // 釋放時給予隨機初始方向
 }
+
+
+核心問題 2：玩家轉角對齊導致的強制擠壓 (Coordinate Snap Corruption)
+📌 發生原因
+為了讓玩家能順利進入 90 度的巷道，原本的 checkTurn 實作了將座標「對齊到 10 的倍數網格」的功能 (snap-to-grid)。
+然而，原本的演算法在執行順序上有致命的瑕疵：它是「先檢查下一步 (nx, ny) 是否撞牆」，確認沒撞牆後，才把目前的 x 或 y 加上 5 個像素進行對齊。
+這意味著，當玩家貼著牆壁並輸入轉向時，這個「加 5 像素的對齊偏移量」完全繞過了 checkCollision 的檢查。這會直接把玩家的座標覆寫到牆壁內，一旦座標落入牆內，後續的碰撞運算就會完全失效，讓玩家得以在牆體內自由移動。
+🛠 修復細節
+導入「預先計算 (Look-ahead)」機制。先算出對齊後的新座標 (snapX, snapY)，接著對這個虛擬的座標做「原地」與「下一步」的雙重碰撞檢查，確認絕對安全後才提交狀態。
+
+// ✅ [修復邏輯] 重構 checkTurn 演算法
+auto checkTurn = [](int &x, int &y, int &nextDir, int &currentDir) {
+  if (nextDir == 0 || nextDir == currentDir) return;
+
+  int snapX = x, snapY = y;
+  
+  // 加上括號確保 C++ 邏輯運算子優先權無誤
+  bool isPerpendicular = ((currentDir == 1 || currentDir == 2) && (nextDir == 3 || nextDir == 4)) ||
+                         ((currentDir == 3 || currentDir == 4) && (nextDir == 1 || nextDir == 2));
+
+  // 1. 產生虛擬對齊座標 (Look-ahead)
+  if (isPerpendicular) {
+     if (nextDir == 1 || nextDir == 2) snapX = ((x + 5) / 10) * 10;
+     else snapY = ((y + 5) / 10) * 10;
+  }
+
+  // 2. 基於虛擬座標，計算跨出下一步的座標
+  int nx = snapX, ny = snapY;
+  if (nextDir == 1) ny -= 4;
+  else if (nextDir == 2) ny += 4;
+  else if (nextDir == 3) nx -= 4;
+  else if (nextDir == 4) nx += 4;
+
+  // 3. 雙重 AABB 碰撞驗證：確保對齊後不會卡進牆壁，且下一步合法
+  if (!checkCollision(nx, ny) && !checkCollision(snapX, snapY)) {
+    x = snapX;             // 提交座標
+    y = snapY;             // 提交座標
+    currentDir = nextDir;  // 更新實際方向
+    nextDir = 0;           // 清空輸入緩衝
+  }
+};
+
+
+
+核心問題 3：物理碰撞體積與地圖網格的數學矛盾 (Hitbox Size Mismatch)
+📌 發生原因
+檢查 walls 陣列的資料結構，許多牆壁與牆壁之間的縫隙寬度僅有 10px（例如 y=10 與 y=30 的區間，扣掉高度本身，實體通道寬度為 10）。
+但是，遊戲宣告的 #define PLAYER_SIZE 8 指的是半徑，也就是角色的碰撞直徑高達 16px。
+從數學與物理學角度來看，16px 的剛體無法塞入 10px 的通道。當玩家在死胡同被卡住並連續輸入方向鍵時，會不斷觸發上述的「對齊 Bug」將自己強行擠破牆壁。
+🛠 修復細節
+重新定義實體的半徑參數，確保角色直徑小於地圖中最窄的通道寬度（10px），讓碰撞演算法得以正常運作。
+
+
+// ❌ [原始設定] 直徑為 16px
+// #define PLAYER_SIZE 8
+
+// ✅ [修復設定] 將半徑改為 4 (直徑 8px)，確保能合法通過 10px 巷道
+#define PLAYER_SIZE 4
