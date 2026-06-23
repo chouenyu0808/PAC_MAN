@@ -2,7 +2,7 @@
  * PAC-MAN Multi-Screen - Complex Maze Edition (Fixed Rendering & AI)
  */
 
-#define ROLE 2// 1=中, 2=左, 3=右, 4=計分板
+#define ROLE 1 // 1=中, 2=左, 3=右, 4=計分板
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
@@ -32,6 +32,8 @@ int p1Dir = 0, p2Dir = 0, p1NextDir = 0, p2NextDir = 0, score1 = 0, score2 = 0;
 int lp1X, lp1Y, lp2X, lp2Y;
 int gX[NUM_GHOSTS], gY[NUM_GHOSTS], lgX[NUM_GHOSTS], lgY[NUM_GHOSTS];
 volatile bool dataReceived = false;
+volatile bool resetMazeNeeded = false;
+volatile bool gameOverUINeeded = false;
 int levelResetCounter = 0;
 unsigned long frightenedModeEndTime = 0;
 unsigned long ghostEatenTime[NUM_GHOSTS] = {0, 0, 0, 0};
@@ -41,6 +43,10 @@ volatile int lives1 = 3;
 volatile int lives2 = 3;
 volatile bool gameOver = false;
 volatile int winner = 0;
+unsigned long gameOverTime = 0;
+unsigned long p1RespawnInvulnerableTime = 0;
+unsigned long p2RespawnInvulnerableTime = 0;
+unsigned long lastTickTime = 0;
 
 // --- 智慧型牢籠延遲釋放機制 (Ghost Cage Jail System) ---
 bool gameStarted = false;
@@ -352,336 +358,330 @@ struct Pellet {
 };
 
 const Pellet pellets[] PROGMEM = {
-  {20, 20, true},
-  {40, 20, false},
-  {60, 20, false},
-  {80, 20, false},
-  {100, 20, false},
-  {120, 20, false},
-  {140, 20, false},
-  {160, 20, false},
-  {180, 20, false},
-  {210, 20, false},
-  {230, 20, false},
-  {250, 20, false},
-  {270, 20, false},
-  {290, 20, false},
-  {310, 20, false},
-  {330, 20, false},
-  {370, 20, false},
-  {390, 20, false},
-  {410, 20, false},
-  {430, 20, false},
-  {450, 20, false},
-  {470, 20, false},
-  {520, 20, false},
-  {540, 20, false},
-  {560, 20, false},
-  {640, 20, false},
-  {660, 20, false},
-  {680, 20, true},
-  {260, 30, false},
-  {300, 30, false},
-  {480, 30, false},
-  {20, 40, false},
-  {60, 40, false},
-  {100, 40, false},
-  {140, 40, false},
-  {180, 40, false},
-  {200, 40, false},
-  {330, 40, false},
-  {370, 40, false},
-  {450, 40, false},
-  {490, 40, false},
-  {510, 40, false},
-  {560, 40, false},
-  {580, 40, false},
-  {600, 40, false},
-  {620, 40, false},
-  {640, 40, false},
-  {680, 40, false},
-  {70, 50, false},
-  {90, 50, false},
-  {260, 50, false},
-  {300, 50, false},
-  {410, 50, false},
-  {430, 50, false},
-  {520, 50, false},
-  {20, 60, false},
-  {60, 60, false},
-  {100, 60, false},
-  {140, 60, false},
-  {180, 60, false},
-  {330, 60, false},
-  {370, 60, false},
-  {450, 60, false},
-  {560, 60, false},
-  {640, 60, false},
-  {680, 60, false},
-  {30, 70, false},
-  {50, 70, false},
-  {110, 70, false},
-  {130, 70, false},
-  {190, 70, false},
-  {210, 70, false},
-  {230, 70, false},
-  {250, 70, false},
-  {270, 70, false},
-  {290, 70, false},
-  {310, 70, false},
-  {340, 70, false},
-  {360, 70, false},
-  {380, 70, false},
-  {400, 70, false},
-  {460, 70, false},
-  {480, 70, false},
-  {520, 70, false},
-  {570, 70, false},
-  {590, 70, false},
-  {610, 70, false},
-  {630, 70, false},
-  {650, 70, false},
-  {670, 70, false},
-  {20, 80, false},
-  {60, 80, false},
-  {100, 80, false},
-  {140, 80, false},
-  {180, 80, false},
-  {220, 80, false},
-  {410, 80, false},
-  {490, 80, false},
-  {560, 80, false},
-  {640, 80, false},
-  {680, 80, false},
-  {70, 90, false},
-  {90, 90, false},
-  {290, 90, false},
-  {520, 90, false},
-  {20, 100, false},
-  {60, 100, false},
-  {100, 100, false},
-  {140, 100, false},
-  {180, 100, false},
-  {200, 100, false},
-  {220, 100, true},
-  {240, 100, false},
-  {260, 100, false},
-  {280, 100, false},
-  {300, 100, false},
-  {320, 100, false},
-  {340, 100, false},
-  {360, 100, false},
-  {380, 100, false},
-  {400, 100, false},
-  {420, 100, false},
-  {440, 100, false},
-  {460, 100, false},
-  {480, 100, true},
-  {500, 100, false},
-  {530, 100, false},
-  {550, 100, false},
-  {600, 100, false},
-  {620, 100, false},
-  {640, 100, false},
-  {680, 100, false},
-  {150, 110, false},
-  {170, 110, false},
-  {270, 110, false},
-  {430, 110, false},
-  {490, 110, false},
-  {520, 110, false},
-  {560, 110, false},
-  {20, 120, false},
-  {60, 120, false},
-  {100, 120, false},
-  {140, 120, false},
-  {180, 120, false},
-  {600, 120, false},
-  {640, 120, false},
-  {680, 120, false},
-  {30, 130, false},
-  {50, 130, false},
-  {110, 130, false},
-  {130, 130, false},
-  {220, 130, false},
-  {240, 130, false},
-  {260, 130, false},
-  {430, 130, false},
-  {490, 130, false},
-  {520, 130, false},
-  {560, 130, false},
-  {580, 130, false},
-  {650, 130, false},
-  {670, 130, false},
-  {20, 140, false},
-  {140, 140, false},
-  {180, 140, false},
-  {270, 140, false},
-  {570, 140, false},
-  {220, 150, false},
-  {430, 150, false},
-  {490, 150, false},
-  {520, 150, false},
-  {670, 150, false},
-  {20, 160, false},
-  {40, 160, false},
-  {60, 160, false},
-  {80, 160, false},
-  {100, 160, false},
-  {120, 160, false},
-  {140, 160, false},
-  {180, 160, false},
-  {200, 160, false},
-  {270, 160, false},
-  {570, 160, false},
-  {70, 170, false},
-  {220, 170, false},
-  {430, 170, false},
-  {450, 170, false},
-  {470, 170, false},
-  {490, 170, false},
-  {520, 170, false},
-  {540, 170, false},
-  {560, 170, false},
-  {580, 170, false},
-  {600, 170, false},
-  {620, 170, false},
-  {640, 170, false},
-  {660, 170, false},
-  {680, 170, false},
-  {20, 180, false},
-  {140, 180, false},
-  {180, 180, false},
-  {270, 180, false},
-  {70, 190, false},
-  {220, 190, false},
-  {430, 190, false},
-  {490, 190, false},
-  {520, 190, false},
-  {560, 190, false},
-  {640, 190, false},
-  {680, 190, false},
-  {20, 200, false},
-  {80, 200, false},
-  {100, 200, false},
-  {140, 200, false},
-  {180, 200, false},
-  {230, 200, false},
-  {250, 200, false},
-  {270, 200, false},
-  {290, 200, false},
-  {310, 200, false},
-  {330, 200, false},
-  {350, 200, false},
-  {370, 200, false},
-  {390, 200, false},
-  {410, 200, false},
-  {440, 200, false},
-  {460, 200, false},
-  {480, 200, false},
-  {600, 200, false},
-  {620, 200, false},
-  {220, 210, false},
-  {380, 210, false},
-  {450, 210, false},
-  {520, 210, false},
-  {560, 210, false},
-  {680, 210, false},
-  {20, 220, false},
-  {100, 220, false},
-  {140, 220, false},
-  {180, 220, false},
-  {330, 220, false},
-  {600, 220, false},
-  {30, 230, false},
-  {50, 230, false},
-  {70, 230, false},
-  {90, 230, false},
-  {110, 230, false},
-  {130, 230, false},
-  {220, 230, false},
-  {240, 230, false},
-  {260, 230, false},
-  {280, 230, false},
-  {300, 230, false},
-  {320, 230, false},
-  {340, 230, false},
-  {360, 230, false},
-  {380, 230, false},
-  {400, 230, false},
-  {420, 230, false},
-  {440, 230, false},
-  {460, 230, false},
-  {480, 230, false},
-  {500, 230, false},
-  {520, 230, false},
-  {540, 230, false},
-  {560, 230, false},
-  {580, 230, false},
-  {610, 230, false},
-  {630, 230, false},
-  {650, 230, false},
-  {670, 230, false},
-  {20, 240, false},
-  {60, 240, false},
-  {140, 240, false},
-  {180, 240, false},
-  {410, 240, false},
-  {450, 240, false},
-  {490, 240, false},
-  {640, 240, false},
-  {680, 240, false},
-  {220, 250, false},
-  {260, 250, false},
-  {300, 250, false},
-  {560, 250, false},
-  {20, 260, false},
-  {60, 260, false},
-  {100, 260, false},
-  {120, 260, false},
-  {140, 260, false},
-  {160, 260, false},
-  {180, 260, false},
-  {200, 260, false},
-  {310, 260, false},
-  {330, 260, false},
-  {370, 260, false},
-  {390, 260, false},
-  {410, 260, false},
-  {450, 260, false},
-  {490, 260, false},
-  {510, 260, false},
-  {530, 260, false},
-  {550, 260, false},
-  {570, 260, false},
-  {590, 260, false},
-  {640, 260, false},
-  {680, 260, false},
-  {220, 270, false},
-  {260, 270, false},
-  {300, 270, false},
-  {600, 270, false},
-  {20, 280, true},
-  {40, 280, false},
-  {60, 280, false},
-  {80, 280, false},
-  {100, 280, false},
-  {230, 280, false},
-  {250, 280, false},
-  {270, 280, false},
-  {290, 280, false},
-  {330, 280, false},
-  {350, 280, false},
-  {370, 280, false},
-  {410, 280, false},
-  {430, 280, false},
-  {450, 280, false},
-  {470, 280, false},
-  {490, 280, false},
-  {610, 280, false},
-  {630, 280, false},
-  {650, 280, false},
-  {670, 280, true}
+  { 20, 20, true },
+  { 40, 20, false },
+  { 60, 20, false },
+  { 80, 20, false },
+  { 100, 20, false },
+  { 120, 20, false },
+  { 140, 20, false },
+  { 180, 20, false },
+  { 210, 20, false },
+  { 230, 20, false },
+  { 250, 20, false },
+  { 270, 20, false },
+  { 290, 20, false },
+  { 310, 20, false },
+  { 330, 20, true },
+  { 370, 20, false },
+  { 390, 20, false },
+  { 410, 20, false },
+  { 430, 20, false },
+  { 450, 20, false },
+  { 470, 20, false },
+  { 520, 20, false },
+  { 540, 20, false },
+  { 560, 20, false },
+  { 640, 20, false },
+  { 660, 20, false },
+  { 680, 20, true },
+  { 260, 30, false },
+  { 300, 30, false },
+  { 480, 30, false },
+  { 20, 40, false },
+  { 60, 40, false },
+  { 100, 40, false },
+  { 140, 40, false },
+  { 180, 40, false },
+  { 200, 40, false },
+  { 330, 40, false },
+  { 370, 40, false },
+  { 450, 40, false },
+  { 490, 40, false },
+  { 510, 40, false },
+  { 560, 40, false },
+  { 580, 40, false },
+  { 600, 40, false },
+  { 620, 40, false },
+  { 640, 40, false },
+  { 680, 40, false },
+  { 70, 50, false },
+  { 90, 50, false },
+  { 260, 50, false },
+  { 300, 50, false },
+  { 410, 50, false },
+  { 430, 50, false },
+  { 520, 50, false },
+  { 20, 60, false },
+  { 60, 60, false },
+  { 100, 60, false },
+  { 140, 60, false },
+  { 180, 60, false },
+  { 330, 60, false },
+  { 370, 60, false },
+  { 450, 60, false },
+  { 560, 60, false },
+  { 640, 60, false },
+  { 680, 60, false },
+  { 30, 70, false },
+  { 50, 70, false },
+  { 110, 70, false },
+  { 130, 70, false },
+  { 190, 70, false },
+  { 210, 70, false },
+  { 230, 70, false },
+  { 250, 70, false },
+  { 270, 70, false },
+  { 290, 70, false },
+  { 310, 70, false },
+  { 340, 70, false },
+  { 360, 70, false },
+  { 380, 70, false },
+  { 400, 70, false },
+  { 460, 70, false },
+  { 480, 70, false },
+  { 520, 70, false },
+  { 570, 70, false },
+  { 590, 70, false },
+  { 610, 70, false },
+  { 630, 70, false },
+  { 650, 70, false },
+  { 670, 70, false },
+  { 20, 80, false },
+  { 60, 80, false },
+  { 100, 80, false },
+  { 140, 80, false },
+  { 180, 80, false },
+  { 220, 80, false },
+  { 410, 80, false },
+  { 490, 80, false },
+  { 560, 80, false },
+  { 640, 80, false },
+  { 680, 80, false },
+  { 70, 90, false },
+  { 90, 90, false },
+  { 290, 90, false },
+  { 520, 90, false },
+  { 20, 100, false },
+  { 60, 100, false },
+  { 100, 100, false },
+  { 140, 100, false },
+  { 180, 100, false },
+  { 200, 100, false },
+  { 220, 100, true },
+  { 240, 100, false },
+  { 260, 100, false },
+  { 280, 100, false },
+  { 300, 100, false },
+  { 320, 100, false },
+  { 340, 100, false },
+  { 360, 100, false },
+  { 380, 100, false },
+  { 430, 100, false },
+  { 450, 100, false },
+  { 470, 100, true },
+  { 490, 100, false },
+  { 510, 100, false },
+  { 530, 100, false },
+  { 550, 100, false },
+  { 600, 100, false },
+  { 620, 100, false },
+  { 640, 100, false },
+  { 680, 100, false },
+  { 150, 110, false },
+  { 170, 110, false },
+  { 270, 110, false },
+  { 520, 110, false },
+  { 560, 110, false },
+  { 20, 120, false },
+  { 60, 120, false },
+  { 100, 120, false },
+  { 140, 120, false },
+  { 180, 120, false },
+  { 430, 120, false },
+  { 490, 120, false },
+  { 600, 120, false },
+  { 640, 120, false },
+  { 680, 120, false },
+  { 30, 130, false },
+  { 50, 130, false },
+  { 110, 130, false },
+  { 130, 130, false },
+  { 220, 130, false },
+  { 240, 130, false },
+  { 260, 130, false },
+  { 520, 130, false },
+  { 560, 130, false },
+  { 580, 130, false },
+  { 650, 130, false },
+  { 670, 130, false },
+  { 20, 140, false },
+  { 140, 140, false },
+  { 180, 140, false },
+  { 490, 140, false },
+  { 570, 140, false },
+  { 220, 150, false },
+  { 520, 150, false },
+  { 670, 150, false },
+  { 20, 160, false },
+  { 40, 160, false },
+  { 60, 160, false },
+  { 80, 160, false },
+  { 100, 160, true },
+  { 120, 160, false },
+  { 140, 160, false },
+  { 180, 160, false },
+  { 200, 160, false },
+  { 490, 160, false },
+  { 570, 160, false },
+  { 70, 170, false },
+  { 220, 170, false },
+  { 270, 170, false },
+  { 430, 170, false },
+  { 450, 170, false },
+  { 470, 170, false },
+  { 520, 170, false },
+  { 540, 170, false },
+  { 560, 170, false },
+  { 580, 170, false },
+  { 600, 170, true },
+  { 620, 170, false },
+  { 640, 170, false },
+  { 660, 170, false },
+  { 680, 170, false },
+  { 20, 180, false },
+  { 140, 180, false },
+  { 180, 180, false },
+  { 490, 180, false },
+  { 70, 190, false },
+  { 220, 190, false },
+  { 270, 190, false },
+  { 430, 190, false },
+  { 520, 190, false },
+  { 560, 190, false },
+  { 640, 190, false },
+  { 680, 190, false },
+  { 20, 200, false },
+  { 80, 200, false },
+  { 100, 200, false },
+  { 140, 200, false },
+  { 180, 200, false },
+  { 230, 200, false },
+  { 250, 200, false },
+  { 280, 200, false },
+  { 300, 200, false },
+  { 320, 200, false },
+  { 340, 200, false },
+  { 360, 200, false },
+  { 380, 200, false },
+  { 400, 200, false },
+  { 420, 200, false },
+  { 440, 200, false },
+  { 460, 200, false },
+  { 480, 200, false },
+  { 600, 200, false },
+  { 620, 200, false },
+  { 220, 210, false },
+  { 330, 210, false },
+  { 450, 210, false },
+  { 520, 210, false },
+  { 560, 210, false },
+  { 680, 210, false },
+  { 20, 220, false },
+  { 100, 220, false },
+  { 140, 220, false },
+  { 180, 220, false },
+  { 380, 220, false },
+  { 600, 220, false },
+  { 30, 230, false },
+  { 50, 230, false },
+  { 70, 230, false },
+  { 90, 230, false },
+  { 110, 230, false },
+  { 130, 230, false },
+  { 220, 230, false },
+  { 240, 230, false },
+  { 260, 230, false },
+  { 280, 230, false },
+  { 300, 230, false },
+  { 320, 230, false },
+  { 340, 230, false },
+  { 360, 230, false },
+  { 390, 230, false },
+  { 410, 230, false },
+  { 430, 230, false },
+  { 450, 230, false },
+  { 470, 230, false },
+  { 490, 230, false },
+  { 510, 230, false },
+  { 530, 230, false },
+  { 550, 230, false },
+  { 570, 230, false },
+  { 590, 230, false },
+  { 610, 230, false },
+  { 630, 230, false },
+  { 650, 230, false },
+  { 670, 230, false },
+  { 20, 240, false },
+  { 60, 240, false },
+  { 140, 240, true },
+  { 180, 240, false },
+  { 560, 240, true },
+  { 640, 240, false },
+  { 680, 240, false },
+  { 220, 250, false },
+  { 260, 250, false },
+  { 300, 250, false },
+  { 410, 250, false },
+  { 450, 250, false },
+  { 490, 250, false },
+  { 20, 260, false },
+  { 60, 260, false },
+  { 100, 260, false },
+  { 120, 260, false },
+  { 140, 260, false },
+  { 160, 260, false },
+  { 180, 260, false },
+  { 200, 260, false },
+  { 310, 260, false },
+  { 330, 260, false },
+  { 370, 260, false },
+  { 390, 260, false },
+  { 500, 260, false },
+  { 520, 260, false },
+  { 540, 260, false },
+  { 560, 260, false },
+  { 580, 260, false },
+  { 600, 260, false },
+  { 640, 260, false },
+  { 680, 260, false },
+  { 220, 270, false },
+  { 260, 270, false },
+  { 300, 270, false },
+  { 410, 270, false },
+  { 450, 270, false },
+  { 490, 270, false },
+  { 20, 280, true },
+  { 40, 280, false },
+  { 60, 280, false },
+  { 80, 280, false },
+  { 100, 280, false },
+  { 230, 280, false },
+  { 250, 280, false },
+  { 270, 280, false },
+  { 290, 280, false },
+  { 330, 280, false },
+  { 350, 280, true },
+  { 370, 280, false },
+  { 420, 280, false },
+  { 440, 280, false },
+  { 460, 280, false },
+  { 480, 280, false },
+  { 600, 280, false },
+  { 620, 280, false },
+  { 640, 280, false },
+  { 660, 280, true },
+  { 680, 280, false }
 };
 const int pelletCount = sizeof(pellets) / sizeof(Pellet);
 bool pelletEaten[pelletCount > 0 ? pelletCount : 1]; // 追蹤各點點是否被吃掉的狀態
@@ -774,6 +774,47 @@ void updateScoreText() {
 }
 #endif
 
+void drawGameOverUI() {
+  tft.fillScreen(ILI9341_BLACK);
+  #if ROLE == 4
+  tft.drawRect(5, 5, 230, 310, ILI9341_RED);
+  tft.setCursor(35, 60); tft.setTextColor(ILI9341_RED); tft.setTextSize(3); tft.print("GAME OVER");
+  
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setCursor(20, 130); tft.print("P1 Score: "); tft.print(score1);
+  tft.setCursor(20, 160); tft.print("P2 Score: "); tft.print(score2);
+  
+  tft.setCursor(20, 220);
+  if (winner == 1) {
+    tft.setTextColor(ILI9341_YELLOW);
+    tft.print("WINNER: PLAYER 1");
+  } else if (winner == 2) {
+    tft.setTextColor(ILI9341_GREEN);
+    tft.print("WINNER: PLAYER 2");
+  } else {
+    tft.setTextColor(ILI9341_WHITE);
+    tft.print("GAME DRAW / TIE");
+  }
+  #else
+  tft.setCursor(45, 100);
+  tft.setTextColor(ILI9341_RED);
+  tft.setTextSize(3);
+  tft.print("GAME OVER");
+  
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setCursor(35, 160);
+  if (winner == 1) {
+    tft.print("Winner: Player 1");
+  } else if (winner == 2) {
+    tft.print("Winner: Player 2");
+  } else {
+    tft.print("Winner: Draw!");
+  }
+  #endif
+}
+
 void receiveEvent(int howMany) {
   if (howMany >= 32) {
     p1X = Wire.read() | (Wire.read() << 8); p1Y = Wire.read() | (Wire.read() << 8);
@@ -791,21 +832,7 @@ void receiveEvent(int howMany) {
     int d7 = Wire.read() | (Wire.read() << 8);
     int remoteResetCounter = d7 & 0x0F;
     
-    bool oldGameOver = gameOver;
-    gameOver = (d7 >> 4) & 1;
-    winner = (d7 >> 5) & 0x03;
-    frightenedModeDeciseconds = d7 >> 8;
-    frightenedModeActive = (frightenedModeDeciseconds > 0);
-    
-    // 檢測從遊戲結束重置回遊玩狀態，重新繪製迷宮/UI
-    if (oldGameOver && !gameOver) {
-      #if ROLE == 4
-      drawScoreUI();
-      #else
-      drawMaze((ROLE==1?240:(ROLE==2?0:480)));
-      #endif
-    }
-    
+    // 先處理重置計數器，以確保重繪迷宮時 pelletEaten 狀態已被重置為 false
     if (remoteResetCounter != levelResetCounter) {
       levelResetCounter = remoteResetCounter;
       for (int i = 0; i < pelletCount; i++) {
@@ -813,7 +840,32 @@ void receiveEvent(int howMany) {
       }
     }
     
+    bool oldGameOver = gameOver;
+    gameOver = (d7 >> 4) & 1;
+    winner = (d7 >> 5) & 0x03;
+    frightenedModeDeciseconds = d7 >> 8;
+    frightenedModeActive = (frightenedModeDeciseconds > 0);
+    
+    // 檢測遊戲結束狀態轉換，非同步通知主迴圈繪製 Game Over UI
+    if (!oldGameOver && gameOver) {
+      gameOverUINeeded = true;
+    }
+    
+    // 檢測從遊戲結束重置回遊玩狀態，非同步通知主迴圈重新繪製迷宮/UI
+    if (oldGameOver && !gameOver) {
+      resetMazeNeeded = true;
+    }
+    
     for(int i=0; i<NUM_GHOSTS; i++) { gX[i] = Wire.read() | (Wire.read() << 8); gY[i] = Wire.read() | (Wire.read() << 8); }
+    
+    // 如果檢測到重置，在此時(新座標讀取完畢後)同步前一幀位置，防止新遊戲開始時在舊位置畫黑色抹除框
+    if (resetMazeNeeded) {
+      lp1X = p1X; lp1Y = p1Y; lp2X = p2X; lp2Y = p2Y;
+      for (int k = 0; k < NUM_GHOSTS; k++) {
+        lgX[k] = gX[k]; lgY[k] = gY[k];
+      }
+    }
+    
     dataReceived = true;
   }
 }
@@ -861,10 +913,14 @@ void setup() {
   Wire.onReceive(receiveEvent);
 #endif
 
-#if ROLE == 4
+#if ROLE == 1
+  drawMaze(240);
+#elif ROLE == 2
+  drawMaze(0);
+#elif ROLE == 3
+  drawMaze(480);
+#elif ROLE == 4
   drawScoreUI();
-#else
-  drawMaze((ROLE==1?240:(ROLE==2?0:480)));
 #endif
 
 #if ROLE == 2 || ROLE == 3
@@ -883,13 +939,42 @@ void setup() {
 
 void loop() {
   #if ROLE == 1
-    handleI2CInputs(); updateLogic(); syncI2CSlaves(); render(240); updateMusic();
+    unsigned long now = millis();
+    if (now - lastTickTime >= 45) {
+      lastTickTime = now;
+      handleI2CInputs(); updateLogic(); syncI2CSlaves(); render(240); updateMusic();
+    }
+  #elif ROLE == 2
+    if (resetMazeNeeded) {
+      drawMaze(0);
+      resetMazeNeeded = false;
+    }
+    if (gameOverUINeeded) {
+      drawGameOverUI();
+      gameOverUINeeded = false;
+    }
+    if (dataReceived) { render(0); dataReceived = false; }
+  #elif ROLE == 3
+    if (resetMazeNeeded) {
+      drawMaze(480);
+      resetMazeNeeded = false;
+    }
+    if (gameOverUINeeded) {
+      drawGameOverUI();
+      gameOverUINeeded = false;
+    }
+    if (dataReceived) { render(480); dataReceived = false; }
   #elif ROLE == 4
+    if (resetMazeNeeded) {
+      drawScoreUI();
+      resetMazeNeeded = false;
+    }
+    if (gameOverUINeeded) {
+      drawGameOverUI();
+      gameOverUINeeded = false;
+    }
     if (dataReceived) { updateScoreText(); dataReceived = false; }
-  #else
-    if (dataReceived) { render((ROLE == 2) ? 0 : 480); dataReceived = false; }
   #endif
-  delay(15); // 稍微增加延遲減少閃爍
 }
 
 #if ROLE == 1
@@ -908,30 +993,43 @@ void handleI2CInputs() {
 }
 void updateLogic() {
   if (gameOver) {
-    if (p1NextDir != 0 || p2NextDir != 0) {
-      // 遊戲重置以重新開始
-      lives1 = 3;
-      lives2 = 3;
-      score1 = 0;
-      score2 = 0;
-      gameOver = false;
-      winner = 0;
-      p1X = 280; p1Y = 160;
-      p2X = 440; p2Y = 160;
-      p1Dir = 0; p2Dir = 0;
-      p1NextDir = 0; p2NextDir = 0;
-      gameStarted = false;
-      frightenedModeEndTime = 0;
-      for (int i = 0; i < pelletCount; i++) {
-        pelletEaten[i] = false;
+    if (millis() - gameOverTime < 3000) {
+      p1NextDir = 0;
+      p2NextDir = 0;
+    } else {
+      if (p1NextDir != 0 || p2NextDir != 0) {
+        // 遊戲重置以重新開始
+        lives1 = 3;
+        lives2 = 3;
+        score1 = 0;
+        score2 = 0;
+        gameOver = false;
+        winner = 0;
+        p1X = 280; p1Y = 160;
+        p2X = 440; p2Y = 160;
+        p1Dir = 0; p2Dir = 0;
+        p1NextDir = 0; p2NextDir = 0;
+        gameStarted = false;
+        frightenedModeEndTime = 0;
+        p1RespawnInvulnerableTime = 0;
+        p2RespawnInvulnerableTime = 0;
+        for (int i = 0; i < pelletCount; i++) {
+          pelletEaten[i] = false;
+        }
+        int baseInsideX[] = {320, 345, 375, 395};
+        for (int i = 0; i < NUM_GHOSTS; i++) {
+          gX[i] = baseInsideX[i]; gY[i] = 160;
+          ghostEatenTime[i] = 0;
+        }
+        levelResetCounter++; // 通知從屬螢幕也重置狀態
+        drawMaze(240);
+        
+        // 重置前一幀位置，防止在舊位置畫黑色抹除框
+        lp1X = p1X; lp1Y = p1Y; lp2X = p2X; lp2Y = p2Y;
+        for (int k = 0; k < NUM_GHOSTS; k++) {
+          lgX[k] = gX[k]; lgY[k] = gY[k];
+        }
       }
-      int baseInsideX[] = {320, 345, 375, 395};
-      for (int i = 0; i < NUM_GHOSTS; i++) {
-        gX[i] = baseInsideX[i]; gY[i] = 160;
-        ghostEatenTime[i] = 0;
-      }
-      levelResetCounter++; // 通知從屬螢幕也重置狀態
-      drawMaze(240);
     }
     return;
   }
@@ -1020,6 +1118,7 @@ if (abs(p1X - px) < 12 && abs(p1Y - py) < 12) {
   }
   if (allEaten && pelletCount > 0) {
     gameOver = true;
+    gameOverTime = millis();
     if (score1 > score2) winner = 1;
     else if (score2 > score1) winner = 2;
     else winner = 3;
@@ -1074,13 +1173,40 @@ if (abs(p1X - px) < 12 && abs(p1Y - py) < 12) {
     else if (gDirs[i] == 4) gnx += 2;
     
     if (checkCollision(gnx, gny)) {
-      gDirs[i] = random(1, 5);
+      int currentDir = gDirs[i];
+      int oppositeDir = 0;
+      if (currentDir == 1) oppositeDir = 2;
+      else if (currentDir == 2) oppositeDir = 1;
+      else if (currentDir == 3) oppositeDir = 4;
+      else if (currentDir == 4) oppositeDir = 3;
+
+      int validChoices[4];
+      int validCount = 0;
+      int backupChoice = oppositeDir;
+      
+      for (int d = 1; d <= 4; d++) {
+        if (d == oppositeDir) continue;
+        int tx = gX[i], ty = gY[i];
+        if (d == 1) ty -= 2;
+        else if (d == 2) ty += 2;
+        else if (d == 3) tx -= 2;
+        else if (d == 4) tx += 2;
+        if (!checkCollision(tx, ty)) {
+          validChoices[validCount++] = d;
+        }
+      }
+      
+      if (validCount > 0) {
+        gDirs[i] = validChoices[random(0, validCount)];
+      } else {
+        gDirs[i] = backupChoice;
+      }
     } else {
       gX[i] = gnx;
       gY[i] = gny;
     }
     
-    if (abs(p1X - gX[i]) < 12 && abs(p1Y - gY[i]) < 12) {
+    if (abs(p1X - gX[i]) < 12 && abs(p1Y - gY[i]) < 12 && millis() > p1RespawnInvulnerableTime) {
       if (millis() < frightenedModeEndTime) {
         // 玩家 1 吃到鬼
         ghostEatenTime[i] = millis();
@@ -1096,23 +1222,21 @@ if (abs(p1X - px) < 12 && abs(p1Y - py) < 12) {
         lives1--;
         if (lives1 <= 0) {
           gameOver = true;
+          gameOverTime = millis();
           if (score1 > score2) winner = 1;
           else if (score2 > score1) winner = 2;
           else winner = 3;
           drawGameOverUI();
+        } else {
+          // 只有 P1 重置回原點，遊戲繼續
+          p1X = 280; p1Y = 160;
+          p1Dir = 0; p1NextDir = 0;
+          p1RespawnInvulnerableTime = millis() + 2000; // 2秒無敵
+          playMelody(deathMelody, deathDurations, 4);
         }
-        p1X = 280; p1Y = 160; p2X = 440; p2Y = 160;
-        gameStarted = false;
-        frightenedModeEndTime = 0;
-        int baseInsideX[] = {320, 345, 375, 395};
-        for (int k = 0; k < NUM_GHOSTS; k++) {
-          gX[k] = baseInsideX[k]; gY[k] = 160;
-          ghostEatenTime[k] = 0;
-        }
-        playMelody(deathMelody, deathDurations, 4);
       }
     }
-    if (abs(p2X - gX[i]) < 12 && abs(p2Y - gY[i]) < 12) {
+    if (abs(p2X - gX[i]) < 12 && abs(p2Y - gY[i]) < 12 && millis() > p2RespawnInvulnerableTime) {
       if (millis() < frightenedModeEndTime) {
         // 玩家 2 吃到鬼
         ghostEatenTime[i] = millis();
@@ -1128,20 +1252,18 @@ if (abs(p1X - px) < 12 && abs(p1Y - py) < 12) {
         lives2--;
         if (lives2 <= 0) {
           gameOver = true;
+          gameOverTime = millis();
           if (score1 > score2) winner = 1;
           else if (score2 > score1) winner = 2;
           else winner = 3;
           drawGameOverUI();
+        } else {
+          // 只有 P2 重置回原點，遊戲繼續
+          p2X = 440; p2Y = 160;
+          p2Dir = 0; p2NextDir = 0;
+          p2RespawnInvulnerableTime = millis() + 2000; // 2秒無敵
+          playMelody(deathMelody, deathDurations, 4);
         }
-        p1X = 280; p1Y = 160; p2X = 440; p2Y = 160;
-        gameStarted = false;
-        frightenedModeEndTime = 0;
-        int baseInsideX[] = {320, 345, 375, 395};
-        for (int k = 0; k < NUM_GHOSTS; k++) {
-          gX[k] = baseInsideX[k]; gY[k] = 160;
-          ghostEatenTime[k] = 0;
-        }
-        playMelody(deathMelody, deathDurations, 4);
       }
     }
   }
@@ -1168,47 +1290,87 @@ void render(int offset) {
   if (gameOver) {
     return; // 遊戲結束時由事件觸發繪製，此處直接返回避免 I2C 刷新閃爍
   }
+  
+  // 為了防止中斷造成的資料競爭 (Data Race) 與 16-bit 讀取撕裂，我們在此處複製一份區域變數快照
+  int snapP1X, snapP1Y, snapP2X, snapP2Y;
+  int snapP1Dir, snapP2Dir;
+  int snapGX[NUM_GHOSTS], snapGY[NUM_GHOSTS];
+  bool snapFrightenedActive;
+  int snapFrightenedDeci;
+  
+  #if ROLE == 1
+  // Master 可以直接讀取，但為了讓後面程式碼統一，我們也在這裡做一份快照
+  snapP1X = p1X; snapP1Y = p1Y;
+  snapP2X = p2X; snapP2Y = p2Y;
+  snapP1Dir = p1Dir; snapP2Dir = p2Dir;
+  for(int i=0; i<NUM_GHOSTS; i++) { snapGX[i] = gX[i]; snapGY[i] = gY[i]; }
+  snapFrightenedActive = frightenedModeActive;
+  snapFrightenedDeci = frightenedModeDeciseconds;
+  #else
+  // Slave 必須在關閉中斷的狀態下拷貝，確保 16-bit int 的完整性
+  noInterrupts();
+  snapP1X = p1X; snapP1Y = p1Y;
+  snapP2X = p2X; snapP2Y = p2Y;
+  snapP1Dir = p1Dir; snapP2Dir = p2Dir;
+  for(int i=0; i<NUM_GHOSTS; i++) { snapGX[i] = gX[i]; snapGY[i] = gY[i]; }
+  snapFrightenedActive = frightenedModeActive;
+  snapFrightenedDeci = frightenedModeDeciseconds;
+  interrupts();
+  #endif
+
   // 從屬螢幕局部計算點點被吃掉的狀態
   #if ROLE != 1
   for (int i = 0; i < pelletCount; i++) {
     if (!pelletEaten[i]) {
       int px = pgm_read_word(&pellets[i].x) + 10;
       int py = pgm_read_word(&pellets[i].y) + 10;
-      if ((abs(p1X - px) < 12 && abs(p1Y - py) < 12) || (abs(p2X - px) < 12 && abs(p2Y - py) < 12)) {
+      if ((abs(snapP1X - px) < 12 && abs(snapP1Y - py) < 12) || (abs(snapP2X - px) < 12 && abs(snapP2Y - py) < 12)) {
         pelletEaten[i] = true;
       }
     }
   }
   #endif
+
+  // 最佳化牆壁重建偵測：只重建被抹除框覆蓋的牆壁 (範圍改為 PLAYER_SIZE + 2 像素)
+  // 並且採用巢狀篩選讀取 PROGMEM，大幅減少不必要的 `pgm_read_word` 與牆壁繪製次數，消除畫面撕裂與延遲
   auto redrawWallNear = [&](int x, int y) {
+    int checkRange = PLAYER_SIZE + 2; // 比抹除半徑多 1 像素，確保覆蓋邊緣
     for (int i = 0; i < wallCount; i++) {
       int wx = pgm_read_word(&walls[i].x);
-      int wy = pgm_read_word(&walls[i].y);
-      int ww = pgm_read_word(&walls[i].w);
-      int wh = pgm_read_word(&walls[i].h);
-      if (x + 16 >= wx && x - 16 <= wx + ww && y + 16 >= wy && y - 16 <= wy + wh) {
-        int lx = wx - offset;
-        if (lx + ww > 0 && lx < 240) {
-          int drawX = max(0, lx);
-          int drawW = min(lx + ww, 240) - drawX;
-          tft.fillRect(drawX, wy, drawW, wh, ILI9341_BLUE);
+      if (x + checkRange >= wx) {
+        int ww = pgm_read_word(&walls[i].w);
+        if (x - checkRange <= wx + ww) {
+          int wy = pgm_read_word(&walls[i].y);
+          if (y + checkRange >= wy) {
+            int wh = pgm_read_word(&walls[i].h);
+            if (y - checkRange <= wy + wh) {
+              int lx = wx - offset;
+              if (lx + ww > 0 && lx < 240) {
+                int drawX = max(0, lx);
+                int drawW = min(lx + ww, 240) - drawX;
+                tft.fillRect(drawX, wy, drawW, wh, ILI9341_BLUE);
+              }
+            }
+          }
         }
       }
     }
     
-    // 重建被踩踏覆蓋區域內的未吃點點
+    // 重建被踩踏覆蓋區域內的未吃點點，同樣採用 nested 檢查以優化效能
     for (int i = 0; i < pelletCount; i++) {
       if (!pelletEaten[i]) {
         int px = pgm_read_word(&pellets[i].x) + 10;
-        int py = pgm_read_word(&pellets[i].y) + 10;
-        bool isPower = pgm_read_byte(&pellets[i].isPower);
-        if (abs(px - x) < 15 && abs(py - y) < 15) {
-          int lx = px - offset;
-          if (lx > 0 && lx < 240) {
-            if (isPower) {
-              tft.fillCircle(lx, py, 4, ILI9341_YELLOW);
-            } else {
-              tft.fillCircle(lx, py, 1, ILI9341_WHITE);
+        if (abs(px - x) < 15) {
+          int py = pgm_read_word(&pellets[i].y) + 10;
+          if (abs(py - y) < 15) {
+            bool isPower = pgm_read_byte(&pellets[i].isPower);
+            int lx = px - offset;
+            if (lx > 0 && lx < 240) {
+              if (isPower) {
+                tft.fillCircle(lx, py, 4, ILI9341_YELLOW);
+              } else {
+                tft.fillCircle(lx, py, 1, ILI9341_WHITE);
+              }
             }
           }
         }
@@ -1221,7 +1383,7 @@ void render(int offset) {
     if (x == lx_old && y == ly_old) return; // 沒動就不抹除
     int l_offset_x = lx_old - offset;
     if (l_offset_x > -20 && l_offset_x < 260) {
-      // 使用方形抹除，確保能完全覆蓋幽靈的方形裙襬部分 (原本的圓形抹除會漏掉角落)
+      // 使用方形抹除，確保能完全覆蓋角色
       tft.fillRect(l_offset_x - PLAYER_SIZE - 1, ly_old - PLAYER_SIZE - 1, (PLAYER_SIZE + 1) * 2, (PLAYER_SIZE + 1) * 2, ILI9341_BLACK);
       redrawWallNear(lx_old, ly_old);
     }
@@ -1242,27 +1404,29 @@ void render(int offset) {
     tft.fillCircle(lx - 3, y - 2, 2, ILI9341_WHITE); tft.fillCircle(lx + 3, y - 2, 2, ILI9341_WHITE);
   };
 
-  erase(p1X, p1Y, lp1X, lp1Y); erase(p2X, p2Y, lp2X, lp2Y);
-  for(int i=0; i<NUM_GHOSTS; i++) erase(gX[i], gY[i], lgX[i], lgY[i]);
+  erase(snapP1X, snapP1Y, lp1X, lp1Y); erase(snapP2X, snapP2Y, lp2X, lp2Y);
+  for(int i=0; i<NUM_GHOSTS; i++) erase(snapGX[i], snapGY[i], lgX[i], lgY[i]);
   
-  drawPac(p1X, p1Y, ILI9341_YELLOW, p1Dir);
-  drawPac(p2X, p2Y, ILI9341_GREEN, p2Dir);
+  drawPac(snapP1X, snapP1Y, ILI9341_YELLOW, snapP1Dir);
+  drawPac(snapP2X, snapP2Y, ILI9341_GREEN, snapP2Dir);
   
   uint16_t ghostColors[NUM_GHOSTS] = {ILI9341_RED, 0xF81F, ILI9341_CYAN, 0xFD20};
   #if ROLE == 1
   frightenedModeActive = (millis() < frightenedModeEndTime);
   frightenedModeDeciseconds = frightenedModeActive ? ((frightenedModeEndTime - millis()) / 100) : 0;
+  snapFrightenedActive = frightenedModeActive;
+  snapFrightenedDeci = frightenedModeDeciseconds;
   #endif
   
   bool flashWhite = false;
-  if (frightenedModeActive && frightenedModeDeciseconds < 20) { // 倒數 2 秒開始閃爍
+  if (snapFrightenedActive && snapFrightenedDeci < 20) { // 倒數 2 秒開始閃爍
     flashWhite = ((millis() / 150) % 2 == 0);
   }
   
   for(int i=0; i<NUM_GHOSTS; i++) {
-    uint16_t color = frightenedModeActive ? (flashWhite ? ILI9341_WHITE : 0x001F) : ghostColors[i];
-    drawGhost(gX[i], gY[i], color);
-    lgX[i] = gX[i]; lgY[i] = gY[i];
+    uint16_t color = snapFrightenedActive ? (flashWhite ? ILI9341_WHITE : 0x001F) : ghostColors[i];
+    drawGhost(snapGX[i], snapGY[i], color);
+    lgX[i] = snapGX[i]; lgY[i] = snapGY[i];
   }
-  lp1X = p1X; lp1Y = p1Y; lp2X = p2X; lp2Y = p2Y;
+  lp1X = snapP1X; lp1Y = snapP1Y; lp2X = snapP2X; lp2Y = snapP2Y;
 }
